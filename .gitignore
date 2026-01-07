@@ -1,0 +1,56 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Ruff / linting
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Credentials (should never be committed)
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# uv
+.uv/
+
+# Temporary
+*.tmp
+*.temp
+/tmp/
