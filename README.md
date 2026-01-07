@@ -14,6 +14,8 @@ A curated collection of useful scripts for macOS automation, development setup, 
 │   ├── automation/          # Task automation scripts
 │   ├── dev-tools/           # Developer productivity tools
 │   └── games/               # Fun stuff
+├── guides/
+│   └── remote-claude-access/ # Remote Claude Code CLI from iPhone
 └── applescript/             # macOS automation scripts
 ```
 
@@ -122,6 +124,12 @@ uv run python/dev-tools/generate-synthetic-rust-code.py --lines 10000 -o test.rs
 ```bash
 uv run python/games/space-war.py
 ```
+
+## Guides
+
+| Guide | Description |
+|-------|-------------|
+| [`remote-claude-access/`](guides/remote-claude-access/) | Access Claude Code CLI from iPhone via Tailscale + Termius/Blink Shell |
 
 ## Requirements
 
