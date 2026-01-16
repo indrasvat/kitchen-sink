@@ -54,3 +54,9 @@ secrets.json
 *.tmp
 *.temp
 /tmp/
+
+# Go
+go/sarasa/sarasa
+go/sarasa/golangci-lint
+go/sarasa/coverage.out
+go/sarasa/coverage.html
