@@ -134,11 +134,37 @@ func (n *NPM) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error) 
 
 		start := time.Now()
 		cmd := exec.CommandContext(ctx, "npm", "install", "-g", pkg.Name+"@latest")
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			log.Error("npm install failed",
+				"package", pkg.Name,
+				"error", err.Error(),
+				"output", string(output),
+			)
 			logger.LogUpgradeError(n.Name(), pkg.Name, err, duration)
+			result.Failed = append(result.Failed, pkg)
+			continue
+		}
+
+		// Verify the upgrade actually happened by checking the current version
+		newVersion, verifyErr := n.getPackageVersion(ctx, pkg.Name)
+		if verifyErr != nil {
+			log.Warn("Could not verify upgrade",
+				"package", pkg.Name,
+				"error", verifyErr.Error(),
+			)
+		}
+
+		if newVersion != "" && newVersion == pkg.Current {
+			// Version didn't change - upgrade didn't actually work
+			log.Error("npm install completed but version unchanged",
+				"package", pkg.Name,
+				"expected", pkg.Latest,
+				"actual", newVersion,
+				"output", string(output),
+			)
 			result.Failed = append(result.Failed, pkg)
 		} else {
 			logger.LogUpgrade(n.Name(), pkg.Name, pkg.Current, pkg.Latest, duration)
@@ -152,6 +178,31 @@ func (n *NPM) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error) 
 func (n *NPM) Cleanup(_ context.Context) error {
 	// npm doesn't have a cleanup command for global packages
 	return nil
+}
+
+// getPackageVersion returns the currently installed version of a global npm package.
+func (n *NPM) getPackageVersion(ctx context.Context, name string) (string, error) {
+	cmd := exec.CommandContext(ctx, "npm", "list", "-g", name, "--json", "--depth=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
+	}
+
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", err
+	}
+
+	if dep, ok := result.Dependencies[name]; ok {
+		return dep.Version, nil
+	}
+
+	return "", nil
 }
 
 // isMajorUpgrade checks if an upgrade crosses a major version boundary.
