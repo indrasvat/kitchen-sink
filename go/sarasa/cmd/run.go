@@ -6,10 +6,13 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/manager"
+	runTUI "github.com/indrasvat/sarasa/internal/tui/run"
+	"github.com/indrasvat/sarasa/internal/ui"
 )
 
 var (
@@ -43,7 +46,6 @@ func init() {
 }
 
 func runRun(_ *cobra.Command, _ []string) error {
-	ctx := context.Background()
 	cfg := GetConfig()
 	log := logger.Get()
 
@@ -73,7 +75,8 @@ func runRun(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(managers) == 0 {
-		fmt.Println("No package managers available")
+		fmt.Println()
+		fmt.Printf("  %s %s\n\n", ui.StyleWarning.Render(ui.IconWarning), ui.StyleMuted.Render("No package managers available"))
 		return nil
 	}
 
@@ -82,55 +85,196 @@ func runRun(_ *cobra.Command, _ []string) error {
 		"dry_run", runDryRun,
 	)
 
+	// Detect output mode
+	mode := ui.DetectOutputMode()
+
+	// Wrap config to implement ManagerConfigProvider interface
+	cfgWrapper := &configWrapper{cfg: cfg}
+
+	switch mode {
+	case ui.ModeTUI:
+		return runRunTUI(managers, opts, cfgWrapper)
+	case ui.ModeStyled, ui.ModePlain:
+		return runRunPlain(managers, opts, cfgWrapper, mode == ui.ModeStyled)
+	}
+
+	return nil
+}
+
+func runRunTUI(managers []manager.Manager, opts *manager.Options, cfg runTUI.ManagerConfigProvider) error {
+	model := runTUI.New(managers, opts, cfg, runDryRun, runSkipCleanup)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return err
+	}
+
+	// Log results
+	log := logger.Get()
+	m := finalModel.(runTUI.Model)
+	for _, result := range m.GetResults() {
+		upgraded := 0
+		failed := 0
+		for _, pkg := range result.Packages {
+			if pkg.Status == "success" {
+				upgraded++
+			} else if pkg.Status == "failed" {
+				failed++
+			}
+		}
+		logger.LogComplete(result.Name, upgraded, failed, result.Duration.Milliseconds())
+	}
+
+	totalUpgraded, totalFailed, _, totalDuration := m.GetStats()
+	log.Info("Sarasa run completed",
+		"total_upgraded", totalUpgraded,
+		"total_failed", totalFailed,
+		"duration_ms", totalDuration.Milliseconds(),
+	)
+
+	return nil
+}
+
+func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.ManagerConfigProvider, styled bool) error {
+	ctx := context.Background()
+	log := logger.Get()
+
+	// Color helper
+	c := func(code, text string) string {
+		if !styled {
+			return text
+		}
+		return code + text + "\033[0m"
+	}
+
+	// ANSI codes
+	const (
+		bold          = "\033[1m"
+		dim           = "\033[2m"
+		red           = "\033[31m"
+		green         = "\033[32m"
+		yellow        = "\033[33m"
+		blue          = "\033[34m"
+		brightCyan    = "\033[96m"
+		brightGreen   = "\033[92m"
+		brightYellow  = "\033[93m"
+		brightMagenta = "\033[95m"
+		white         = "\033[37m"
+	)
+
+	managerColor := func(name string) string {
+		switch name {
+		case "brew":
+			return yellow
+		case "npm":
+			return red
+		case "pipx":
+			return blue
+		case "bun":
+			return brightMagenta
+		default:
+			return brightCyan
+		}
+	}
+
+	// Print header
+	fmt.Println()
+	if runDryRun {
+		fmt.Printf("  %s %s\n", c(brightMagenta, ui.IconDiamond), c(bold+brightMagenta, "SARASA DRY RUN"))
+	} else {
+		fmt.Printf("  %s %s\n", c(brightCyan, ui.IconDiamond), c(bold+brightCyan, "SARASA UPGRADE"))
+	}
+	fmt.Println(c(dim, "  ─────────────────────────────────────────"))
+	fmt.Println()
+
 	// Run upgrades for each manager
 	totalUpgraded := 0
 	totalFailed := 0
+	totalSkipped := 0
 	overallStart := time.Now()
 
 	for _, m := range managers {
 		// Set skip list for this manager
 		opts.SkipList = cfg.GetSkipList(m.Name())
 
-		fmt.Printf("\n=== %s ===\n", m.Name())
-		logger.LogStart(m.Name())
+		mColor := managerColor(m.Name())
+		icon := ""
+		if styled {
+			icon = ui.ManagerIcon(m.Name()) + " "
+		}
 
+		// Manager header
+		fmt.Printf("  %s%s\n", icon, c(bold+mColor, strings.ToUpper(m.Name())))
+
+		logger.LogStart(m.Name())
 		start := time.Now()
 
 		// Run upgrade
 		result, err := m.Upgrade(ctx, runDryRun)
+		duration := time.Since(start)
+
 		if err != nil {
 			log.Error("Manager upgrade failed",
 				"manager", m.Name(),
 				"error", err.Error(),
 			)
-			fmt.Printf("Error: %v\n", err)
+			fmt.Printf("    %s %s\n\n", c(red, ui.IconCross), c(red, err.Error()))
 			continue
 		}
 
 		// Print results
+		hasOutput := false
+
 		if len(result.Upgraded) > 0 {
-			fmt.Printf("Upgraded:\n")
+			hasOutput = true
 			for _, pkg := range result.Upgraded {
-				fmt.Printf("  %s: %s -> %s\n", pkg.Name, pkg.Current, pkg.Latest)
+				fmt.Printf("    %s %s  %s %s %s\n",
+					c(green, ui.IconCheck),
+					c(bold+white, pkg.Name),
+					c(dim, pkg.Current),
+					c(dim, ui.IconArrow),
+					c(brightGreen, pkg.Latest),
+				)
 			}
 		}
 
 		if len(result.Failed) > 0 {
-			fmt.Printf("Failed:\n")
+			hasOutput = true
 			for _, pkg := range result.Failed {
-				fmt.Printf("  %s\n", pkg.Name)
+				fmt.Printf("    %s %s  %s\n",
+					c(red, ui.IconCross),
+					c(bold+white, pkg.Name),
+					c(red, "upgrade failed"),
+				)
 			}
 		}
 
 		if len(result.Skipped) > 0 && runDryRun {
-			fmt.Printf("Would upgrade:\n")
+			hasOutput = true
 			for _, pkg := range result.Skipped {
-				fmt.Printf("  %s: %s -> %s\n", pkg.Name, pkg.Current, pkg.Latest)
+				majorTag := ""
+				if pkg.IsMajor {
+					majorTag = " " + c(bold+brightYellow, "[MAJOR]")
+				}
+				fmt.Printf("    %s %s  %s %s %s%s\n",
+					c(brightMagenta, ui.IconTriangle),
+					c(bold+white, pkg.Name),
+					c(dim, pkg.Current),
+					c(dim, ui.IconArrow),
+					c(brightMagenta, pkg.Latest),
+					majorTag,
+				)
 			}
+		}
+
+		if !hasOutput {
+			fmt.Printf("    %s %s\n", c(green, ui.IconCheck), c(green, "Already up to date"))
 		}
 
 		totalUpgraded += len(result.Upgraded)
 		totalFailed += len(result.Failed)
+		totalSkipped += len(result.Skipped)
 
 		// Run cleanup
 		if !runDryRun && !runSkipCleanup {
@@ -142,16 +286,76 @@ func runRun(_ *cobra.Command, _ []string) error {
 			}
 		}
 
-		duration := time.Since(start).Milliseconds()
-		logger.LogComplete(m.Name(), len(result.Upgraded), len(result.Failed), duration)
+		logger.LogComplete(m.Name(), len(result.Upgraded), len(result.Failed), duration.Milliseconds())
+		fmt.Println()
 	}
 
 	// Summary
 	overallDuration := time.Since(overallStart)
-	fmt.Printf("\n=== Summary ===\n")
-	fmt.Printf("Upgraded: %d packages\n", totalUpgraded)
-	fmt.Printf("Failed: %d packages\n", totalFailed)
-	fmt.Printf("Duration: %s\n", overallDuration.Round(time.Second))
+	fmt.Println(c(dim, "  ─────────────────────────────────────────"))
+	fmt.Println()
+
+	// Build summary parts
+	var summaryParts []string
+
+	if runDryRun {
+		if totalSkipped > 0 {
+			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d to upgrade", totalSkipped)))
+		} else {
+			summaryParts = append(summaryParts, c(green, "All up to date"))
+		}
+	} else {
+		if totalUpgraded > 0 {
+			summaryParts = append(summaryParts, c(green, fmt.Sprintf("%d upgraded", totalUpgraded)))
+		}
+		if totalFailed > 0 {
+			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", totalFailed)))
+		}
+		if totalUpgraded == 0 && totalFailed == 0 {
+			summaryParts = append(summaryParts, c(green, "All up to date"))
+		}
+	}
+
+	// Duration
+	durationStr := formatDuration(overallDuration)
+	summaryParts = append(summaryParts, c(dim, durationStr))
+
+	// Print summary
+	summaryIcon := ui.IconSparkle
+	if totalFailed > 0 {
+		summaryIcon = ui.IconFailed
+	}
+	fmt.Printf("  %s  %s\n", summaryIcon, strings.Join(summaryParts, c(dim, " · ")))
+
+	if runDryRun && totalSkipped > 0 {
+		fmt.Printf("     Run %s to apply upgrades\n", c(brightCyan+bold, "sarasa run"))
+	}
+
+	fmt.Println()
 
 	return nil
+}
+
+// formatDuration formats a duration nicely
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm %ds", minutes, seconds)
+}
+
+// configWrapper wraps the config to implement ManagerConfigProvider
+type configWrapper struct {
+	cfg interface {
+		GetSkipList(managerName string) []string
+	}
+}
+
+func (w *configWrapper) GetSkipList(managerName string) []string {
+	return w.cfg.GetSkipList(managerName)
 }

@@ -9,7 +9,11 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+
+	logsTUI "github.com/indrasvat/sarasa/internal/tui/logs"
+	"github.com/indrasvat/sarasa/internal/ui"
 )
 
 var (
@@ -23,15 +27,23 @@ var (
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View upgrade logs",
-	Long: `View upgrade logs with filtering options.
+	Long: `View upgrade logs with an interactive TUI viewer.
 
 Examples:
-  sarasa logs                         # Today's logs
-  sarasa logs --date=2026-01-15       # Specific date
-  sarasa logs --tail=50               # Last 50 entries
-  sarasa logs --level=error           # Filter by level
-  sarasa logs --manager=brew          # Filter by manager
-  sarasa logs --raw                   # Output raw JSONLines`,
+  sarasa logs                         # Interactive log viewer (today's logs)
+  sarasa logs --date=2026-01-15       # Logs from specific date
+  sarasa logs --tail=50               # Load last 50 entries
+  sarasa logs --level=error           # Pre-filter by level
+  sarasa logs --manager=brew          # Pre-filter by manager
+  sarasa logs --raw                   # Output raw JSONLines (no TUI)
+
+TUI Controls:
+  /         Search logs
+  1-4       Toggle level filters (DBG/INF/WRN/ERR)
+  j/k       Scroll up/down
+  g/G       Jump to top/bottom
+  Esc       Clear search
+  q         Quit`,
 	RunE: runLogs,
 }
 
@@ -45,8 +57,8 @@ func init() {
 	logsCmd.Flags().BoolVar(&logsRaw, "raw", false, "output raw JSONLines")
 }
 
-// LogEntry represents a single log entry.
-type LogEntry struct {
+// jsonLogEntry represents a log entry from the JSON file.
+type jsonLogEntry struct {
 	Timestamp  string `json:"ts"`
 	Level      string `json:"level"`
 	Message    string `json:"msg"`
@@ -84,18 +96,47 @@ func runLogs(_ *cobra.Command, _ []string) error {
 
 	// Check if file exists
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		fmt.Printf("No logs found for %s\n", logFile)
+		fmt.Printf("No logs found at %s\n", logFile)
 		return nil
 	}
 
 	// Read log file
+	entries, err := readLogFile(logFile)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No log entries found")
+		return nil
+	}
+
+	// Output raw if requested
+	if logsRaw {
+		return outputRaw(entries)
+	}
+
+	// Detect output mode
+	mode := ui.DetectOutputMode()
+
+	switch mode {
+	case ui.ModeTUI:
+		return runLogsTUI(entries)
+	case ui.ModeStyled, ui.ModePlain:
+		return runLogsPlain(entries, mode == ui.ModeStyled)
+	}
+
+	return nil
+}
+
+func readLogFile(logFile string) ([]logsTUI.LogEntry, error) {
 	file, err := os.Open(logFile)
 	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
+		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	var entries []LogEntry
+	var entries []logsTUI.LogEntry
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -103,24 +144,41 @@ func runLogs(_ *cobra.Command, _ []string) error {
 			continue
 		}
 
-		var entry LogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		var jsonEntry jsonLogEntry
+		if err := json.Unmarshal([]byte(line), &jsonEntry); err != nil {
 			continue // Skip malformed lines
 		}
 
-		// Apply filters
-		if logsLevel != "" && !strings.EqualFold(entry.Level, logsLevel) {
+		// Apply CLI filters
+		if logsLevel != "" && !strings.EqualFold(jsonEntry.Level, logsLevel) {
 			continue
 		}
-		if logsManager != "" && entry.Manager != logsManager {
+		if logsManager != "" && jsonEntry.Manager != logsManager {
 			continue
+		}
+
+		// Convert to TUI entry
+		entry := logsTUI.LogEntry{
+			Timestamp:  jsonEntry.Timestamp,
+			Level:      jsonEntry.Level,
+			Message:    jsonEntry.Message,
+			Manager:    jsonEntry.Manager,
+			Package:    jsonEntry.Package,
+			From:       jsonEntry.From,
+			To:         jsonEntry.To,
+			Error:      jsonEntry.Error,
+			DurationMs: jsonEntry.DurationMs,
+			Count:      jsonEntry.Count,
+			Upgraded:   jsonEntry.Upgraded,
+			Failed:     jsonEntry.Failed,
+			Raw:        formatEntryRaw(jsonEntry),
 		}
 
 		entries = append(entries, entry)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading log file: %w", err)
+		return nil, fmt.Errorf("error reading log file: %w", err)
 	}
 
 	// Apply tail
@@ -128,73 +186,169 @@ func runLogs(_ *cobra.Command, _ []string) error {
 		entries = entries[len(entries)-logsTail:]
 	}
 
-	// Output
-	if logsRaw {
-		for _, entry := range entries {
-			data, _ := json.Marshal(entry)
-			fmt.Println(string(data))
+	return entries, nil
+}
+
+func formatEntryRaw(entry jsonLogEntry) string {
+	// Create a searchable raw representation
+	parts := []string{entry.Timestamp, entry.Level, entry.Message}
+	if entry.Manager != "" {
+		parts = append(parts, entry.Manager)
+	}
+	if entry.Package != "" {
+		parts = append(parts, entry.Package)
+	}
+	if entry.From != "" {
+		parts = append(parts, entry.From)
+	}
+	if entry.To != "" {
+		parts = append(parts, entry.To)
+	}
+	if entry.Error != "" {
+		parts = append(parts, entry.Error)
+	}
+	return strings.Join(parts, " ")
+}
+
+func runLogsTUI(entries []logsTUI.LogEntry) error {
+	model := logsTUI.New(entries)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	_, err := p.Run()
+	return err
+}
+
+func outputRaw(entries []logsTUI.LogEntry) error {
+	for _, entry := range entries {
+		jsonEntry := jsonLogEntry{
+			Timestamp:  entry.Timestamp,
+			Level:      entry.Level,
+			Message:    entry.Message,
+			Manager:    entry.Manager,
+			Package:    entry.Package,
+			From:       entry.From,
+			To:         entry.To,
+			Error:      entry.Error,
+			DurationMs: entry.DurationMs,
+			Count:      entry.Count,
+			Upgraded:   entry.Upgraded,
+			Failed:     entry.Failed,
 		}
-		return nil
+		data, _ := json.Marshal(jsonEntry)
+		fmt.Println(string(data))
+	}
+	return nil
+}
+
+func runLogsPlain(entries []logsTUI.LogEntry, styled bool) error {
+	// Color helper
+	c := func(code, text string) string {
+		if !styled {
+			return text
+		}
+		return code + text + "\033[0m"
 	}
 
-	// Human-readable output
+	// ANSI codes
+	const (
+		bold        = "\033[1m"
+		dim         = "\033[2m"
+		red         = "\033[31m"
+		green       = "\033[32m"
+		yellow      = "\033[33m"
+		blue        = "\033[34m"
+		brightCyan  = "\033[96m"
+		brightGreen = "\033[92m"
+		brightMagenta = "\033[95m"
+	)
+
+	managerColor := func(name string) string {
+		switch name {
+		case "brew":
+			return yellow
+		case "npm":
+			return red
+		case "pipx":
+			return blue
+		case "bun":
+			return brightMagenta
+		default:
+			return brightCyan
+		}
+	}
+
 	for _, entry := range entries {
-		printLogEntry(entry)
+		// Timestamp
+		ts := entry.Timestamp
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			ts = t.Format("15:04:05")
+		}
+
+		// Level
+		var levelStr string
+		switch strings.ToLower(entry.Level) {
+		case "debug":
+			levelStr = c(dim, "[DBG]")
+		case "info":
+			levelStr = c(green, "[INF]")
+		case "warn", "warning":
+			levelStr = c(yellow, "[WRN]")
+		case "error":
+			levelStr = c(bold+red, "[ERR]")
+		default:
+			levelStr = fmt.Sprintf("[%s]", strings.ToUpper(entry.Level))
+		}
+
+		// Manager
+		managerStr := ""
+		if entry.Manager != "" {
+			managerStr = c(bold+managerColor(entry.Manager), fmt.Sprintf("[%s]", entry.Manager)) + " "
+		}
+
+		// Message
+		msg := entry.Message
+
+		// Details
+		var details []string
+		if entry.Package != "" {
+			if entry.From != "" && entry.To != "" {
+				details = append(details, fmt.Sprintf("%s %s", c(brightCyan, entry.Package), c(brightGreen, entry.From+"→"+entry.To)))
+			} else {
+				details = append(details, c(brightCyan, entry.Package))
+			}
+		}
+		if entry.DurationMs > 0 {
+			details = append(details, c(dim, formatDurationMs(entry.DurationMs)))
+		}
+		if entry.Upgraded > 0 || entry.Failed > 0 {
+			details = append(details, fmt.Sprintf("%s%d %s%d", c(green, "✓"), entry.Upgraded, c(red, "✗"), entry.Failed))
+		}
+		if entry.Count > 0 {
+			details = append(details, fmt.Sprintf("count=%d", entry.Count))
+		}
+		if entry.Error != "" {
+			details = append(details, c(red, entry.Error))
+		}
+
+		detailsStr := ""
+		if len(details) > 0 {
+			detailsStr = c(dim, " (") + strings.Join(details, c(dim, ", ")) + c(dim, ")")
+		}
+
+		fmt.Printf("%s %s %s%s%s\n", c(dim, ts), levelStr, managerStr, msg, detailsStr)
 	}
 
 	return nil
 }
 
-func printLogEntry(entry LogEntry) {
-	// Parse timestamp
-	ts := entry.Timestamp
-	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		ts = t.Format("15:04:05")
+func formatDurationMs(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
 	}
-
-	// Level color/prefix
-	levelPrefix := ""
-	switch strings.ToLower(entry.Level) {
-	case "debug":
-		levelPrefix = "[DBG]"
-	case "info":
-		levelPrefix = "[INF]"
-	case "warn":
-		levelPrefix = "[WRN]"
-	case "error":
-		levelPrefix = "[ERR]"
+	if ms < 60000 {
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
 	}
-
-	// Build message
-	msg := entry.Message
-	if entry.Manager != "" {
-		msg = fmt.Sprintf("[%s] %s", entry.Manager, msg)
-	}
-
-	// Add details
-	details := []string{}
-	if entry.Package != "" {
-		details = append(details, fmt.Sprintf("pkg=%s", entry.Package))
-	}
-	if entry.From != "" && entry.To != "" {
-		details = append(details, fmt.Sprintf("%s->%s", entry.From, entry.To))
-	}
-	if entry.Error != "" {
-		details = append(details, fmt.Sprintf("error=%s", entry.Error))
-	}
-	if entry.DurationMs > 0 {
-		details = append(details, fmt.Sprintf("duration=%dms", entry.DurationMs))
-	}
-	if entry.Upgraded > 0 || entry.Failed > 0 {
-		details = append(details, fmt.Sprintf("upgraded=%d failed=%d", entry.Upgraded, entry.Failed))
-	}
-	if entry.Count > 0 {
-		details = append(details, fmt.Sprintf("count=%d", entry.Count))
-	}
-
-	if len(details) > 0 {
-		msg = fmt.Sprintf("%s (%s)", msg, strings.Join(details, ", "))
-	}
-
-	fmt.Printf("%s %s %s\n", ts, levelPrefix, msg)
+	minutes := ms / 60000
+	seconds := (ms % 60000) / 1000
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
 }
