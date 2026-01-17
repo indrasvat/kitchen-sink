@@ -1,4 +1,4 @@
-.PHONY: help install install-shell install-python uninstall lint lint-shell lint-python list
+.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
@@ -17,7 +17,7 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 
-install: install-shell install-python ## Install all scripts to ~/.local/bin
+install: install-shell install-python install-go ## Install all scripts to ~/.local/bin
 	@echo -e "$(GREEN)✓$(NC) All scripts installed to $(BIN_DIR)"
 
 install-shell: ## Install shell scripts
@@ -41,6 +41,12 @@ install-python: ## Install Python scripts
 	@ln -sf $(CURDIR)/python/games/space-war.py $(BIN_DIR)/space-war
 	@echo -e "  $(GREEN)✓$(NC) Python scripts linked"
 
+install-go: ## Build and install Go tools
+	@mkdir -p $(BIN_DIR)
+	@echo "Building Go tools..."
+	@cd $(CURDIR)/go/sarasa && go build -o $(BIN_DIR)/sarasa .
+	@echo -e "  $(GREEN)✓$(NC) Go tools built and installed"
+
 uninstall: ## Remove installed scripts from ~/.local/bin
 	@echo "Removing installed scripts..."
 	@rm -f $(BIN_DIR)/iterm2-screenshot
@@ -54,9 +60,10 @@ uninstall: ## Remove installed scripts from ~/.local/bin
 	@rm -f $(BIN_DIR)/pyproject-deps-graph
 	@rm -f $(BIN_DIR)/ntp-time
 	@rm -f $(BIN_DIR)/space-war
+	@rm -f $(BIN_DIR)/sarasa
 	@echo -e "$(GREEN)✓$(NC) Scripts removed"
 
-lint: lint-shell lint-python ## Run all linters
+lint: lint-shell lint-python lint-go ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Linting shell scripts..."
@@ -67,6 +74,11 @@ lint-python: ## Lint Python scripts with ruff
 	@echo "Linting Python scripts..."
 	@uv run ruff check python/ || true
 	@echo -e "$(GREEN)✓$(NC) Python lint complete"
+
+lint-go: ## Lint Go code with golangci-lint
+	@echo "Linting Go code..."
+	@cd $(CURDIR)/go/sarasa && golangci-lint run ./... || true
+	@echo -e "$(GREEN)✓$(NC) Go lint complete"
 
 list: ## List all available scripts
 	@echo ""
@@ -85,4 +97,7 @@ list: ## List all available scripts
 	@ls -1 python/dev-tools/*.py 2>/dev/null | xargs -I{} basename {} .py | sed 's/^/    /'
 	@echo "  games/"
 	@ls -1 python/games/*.py 2>/dev/null | xargs -I{} basename {} .py | sed 's/^/    /'
+	@echo ""
+	@echo -e "$(CYAN)Go Tools$(NC)"
+	@echo "    sarasa - Automated global package manager upgrades"
 	@echo ""

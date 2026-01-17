@@ -34,7 +34,7 @@ ENV/
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Environment
 .env
