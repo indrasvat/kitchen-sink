@@ -48,6 +48,9 @@ type Model struct {
 	showInfo  bool
 	showWarn  bool
 	showError bool
+
+	// Display options
+	useUTC bool
 }
 
 // recalcViewportHeight adjusts viewport height based on current UI state.
@@ -124,7 +127,8 @@ var (
 )
 
 // New creates a new logs viewer model.
-func New(entries []LogEntry) Model {
+// If useUTC is true, timestamps are shown in UTC; otherwise local time is used.
+func New(entries []LogEntry, useUTC bool) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search..."
 	ti.CharLimit = 100
@@ -137,6 +141,7 @@ func New(entries []LogEntry) Model {
 		showInfo:    true,
 		showWarn:    true,
 		showError:   true,
+		useUTC:      useUTC,
 	}
 
 	m.applyFilters()
@@ -370,10 +375,14 @@ func (m *Model) updateViewportContent() {
 func (m *Model) renderEntry(entry LogEntry) string {
 	var parts []string
 
-	// Timestamp
+	// Timestamp - format based on useUTC flag
 	ts := entry.Timestamp
 	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		ts = t.Format("15:04:05")
+		if m.useUTC {
+			ts = t.UTC().Format(time.RFC3339)
+		} else {
+			ts = t.Local().Format("2006-01-02T15:04:05")
+		}
 	}
 	parts = append(parts, styleTimestamp.Render(ts))
 

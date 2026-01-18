@@ -22,6 +22,7 @@ var (
 	logsManager string
 	logsTail    int
 	logsRaw     bool
+	logsUTC     bool
 )
 
 var logsCmd = &cobra.Command{
@@ -35,6 +36,7 @@ Examples:
   sarasa logs --tail=50               # Load last 50 entries
   sarasa logs --level=error           # Pre-filter by level
   sarasa logs --manager=brew          # Pre-filter by manager
+  sarasa logs --utc                   # Show timestamps in UTC
   sarasa logs --raw                   # Output raw JSONLines (no TUI)
 
 TUI Controls:
@@ -54,6 +56,7 @@ func init() {
 	logsCmd.Flags().StringVar(&logsLevel, "level", "", "filter by log level (debug, info, warn, error)")
 	logsCmd.Flags().StringVar(&logsManager, "manager", "", "filter by manager name")
 	logsCmd.Flags().IntVar(&logsTail, "tail", 0, "show last N entries")
+	logsCmd.Flags().BoolVar(&logsUTC, "utc", false, "show timestamps in UTC (default: local time)")
 	logsCmd.Flags().BoolVar(&logsRaw, "raw", false, "output raw JSONLines")
 }
 
@@ -121,9 +124,9 @@ func runLogs(_ *cobra.Command, _ []string) error {
 
 	switch mode {
 	case ui.ModeTUI:
-		return runLogsTUI(entries)
+		return runLogsTUI(entries, logsUTC)
 	case ui.ModeStyled, ui.ModePlain:
-		return runLogsPlain(entries, mode == ui.ModeStyled)
+		return runLogsPlain(entries, mode == ui.ModeStyled, logsUTC)
 	}
 
 	return nil
@@ -210,8 +213,8 @@ func formatEntryRaw(entry jsonLogEntry) string {
 	return strings.Join(parts, " ")
 }
 
-func runLogsTUI(entries []logsTUI.LogEntry) error {
-	model := logsTUI.New(entries)
+func runLogsTUI(entries []logsTUI.LogEntry, useUTC bool) error {
+	model := logsTUI.New(entries, useUTC)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	_, err := p.Run()
@@ -240,7 +243,7 @@ func outputRaw(entries []logsTUI.LogEntry) error {
 	return nil
 }
 
-func runLogsPlain(entries []logsTUI.LogEntry, styled bool) error {
+func runLogsPlain(entries []logsTUI.LogEntry, styled bool, useUTC bool) error {
 	// Color helper
 	c := func(code, text string) string {
 		if !styled {
@@ -278,10 +281,14 @@ func runLogsPlain(entries []logsTUI.LogEntry, styled bool) error {
 	}
 
 	for _, entry := range entries {
-		// Timestamp
+		// Timestamp - format based on useUTC flag
 		ts := entry.Timestamp
 		if t, err := time.Parse(time.RFC3339, ts); err == nil {
-			ts = t.Format("15:04:05")
+			if useUTC {
+				ts = t.UTC().Format(time.RFC3339)
+			} else {
+				ts = t.Local().Format("2006-01-02T15:04:05")
+			}
 		}
 
 		// Level
