@@ -188,6 +188,26 @@ times = ["08:00", "14:00", "22:00"]
 |-------|-------------|
 | [`remote-claude-access/`](guides/remote-claude-access/) | Access Claude Code CLI from iPhone via Tailscale + Termius/Blink Shell |
 
+## Development
+
+```bash
+# Install all development tools (macOS)
+make tools
+
+# Install git hooks (runs lints before push)
+make hooks
+
+# Run all lints and tests
+make ci
+
+# Run individual linters
+make lint-shell    # shellcheck
+make lint-python   # ruff
+make lint-go       # golangci-lint
+```
+
+The repo uses [lefthook](https://github.com/evilmartians/lefthook) for git hooks. The pre-push hook runs `make ci` to ensure all lints and tests pass before pushing.
+
 ## Requirements
 
 - **macOS** (most scripts are macOS-specific)

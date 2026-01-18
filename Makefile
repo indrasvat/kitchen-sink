@@ -1,4 +1,4 @@
-.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks
+.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks tools tools-ci
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
@@ -119,3 +119,24 @@ hooks: ## Install git hooks via lefthook
 		echo "    brew install lefthook"; \
 		echo "  Then run 'make hooks' to install git hooks."; \
 	fi
+
+tools: ## Install development tools (macOS)
+	@echo "Checking development tools..."
+	@command -v shellcheck >/dev/null 2>&1 || { echo "  Installing shellcheck..."; brew install shellcheck; }
+	@command -v uv >/dev/null 2>&1 || { echo "  Installing uv..."; brew install uv; }
+	@command -v go >/dev/null 2>&1 || { echo "  Installing go..."; brew install go; }
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "  Installing golangci-lint..."; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6; }
+	@command -v lefthook >/dev/null 2>&1 || { echo "  Installing lefthook..."; go install github.com/evilmartians/lefthook@latest; }
+	@echo -e "$(GREEN)✓$(NC) All tools available"
+	@echo ""
+	@echo "Versions:"
+	@echo -n "  shellcheck: " && shellcheck --version | head -2 | tail -1
+	@echo -n "  uv: " && uv --version
+	@echo -n "  go: " && go version | cut -d' ' -f3
+	@echo -n "  golangci-lint: " && golangci-lint --version | cut -d' ' -f4
+	@echo -n "  lefthook: " && lefthook version
+
+tools-ci: ## Install CI tools (Go only)
+	@echo "Installing CI tools..."
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6
+	@echo -e "$(GREEN)✓$(NC) CI tools installed"
