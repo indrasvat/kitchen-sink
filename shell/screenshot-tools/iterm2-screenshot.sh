@@ -137,7 +137,6 @@ EOF
 
 # Parse command line arguments
 ARGS=("$@")
-PARSED_ARGS=()
 COMMAND_ARGS=()
 FOUND_SEPARATOR=false
 
@@ -364,8 +363,12 @@ if [ "$USE_EXISTING_WINDOW" = true ]; then
     end tell"
     
     # Execute AppleScript
-    ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1)
-    
+    if ! ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1); then
+        log_error "Failed to use existing iTerm window or get window ID"
+        log_error "AppleScript output: $ITERM_WINDOW_ID"
+        exit 1
+    fi
+
 else
     # Create new iTerm2 window
     log_info "Creating new iTerm2 window..."
@@ -441,13 +444,11 @@ else
     end tell"
     
     # Execute AppleScript and get window ID
-    ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1)
-fi
-
-if [ $? -ne 0 ]; then
-    log_error "Failed to create/use iTerm window or get window ID"
-    log_error "AppleScript output: $ITERM_WINDOW_ID"
-    exit 1
+    if ! ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1); then
+        log_error "Failed to create new iTerm window or get window ID"
+        log_error "AppleScript output: $ITERM_WINDOW_ID"
+        exit 1
+    fi
 fi
 
 log_debug "iTerm window ID: $ITERM_WINDOW_ID"
@@ -487,6 +488,7 @@ log_info "Taking screenshot..."
 log_debug "screencapture command: screencapture ${SCREENCAPTURE_OPTS} \"${OUTPUT_FILE}\""
 
 # Try to capture the screenshot
+# shellcheck disable=SC2086 # SCREENCAPTURE_OPTS needs word splitting
 if ! screencapture ${SCREENCAPTURE_OPTS} "${OUTPUT_FILE}" 2>&1; then
     log_error "screencapture command failed"
     log_error "Attempting fallback without window ID..."

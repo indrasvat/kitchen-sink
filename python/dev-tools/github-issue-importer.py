@@ -29,7 +29,6 @@ import sys
 from pathlib import Path
 from types import TracebackType
 from typing import Iterable, List, Optional, Type
-from urllib.parse import urljoin
 
 import click
 import httpx

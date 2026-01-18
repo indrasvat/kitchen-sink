@@ -7,7 +7,6 @@
 
 import pygame
 import random
-import math
 from pygame import mixer
 
 # Initialize Pygame and mixer
