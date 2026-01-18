@@ -50,9 +50,18 @@ uv run python/automation/ntp.py pool.ntp.org
 Use Conventional Commits: `type(scope): summary`
 
 **Format:**
-- One-liner: `type(scope): summary` (imperative mood, lowercase, no period)
+- Single line only: `type(scope): summary` (no body or bullet points)
+- Imperative mood, lowercase, no period
 - Types: feat, fix, docs, style, refactor, test, chore, perf, build
 - Scopes: based on the logical components of the app
+
+**Examples:**
+```
+feat(auth): add login rate limiting
+fix(sarasa): resolve golangci-lint warnings
+docs: update README installation steps
+refactor(api): extract validation into separate module
+```
 
 **Granularity:**
 - Keep commits *reasonably* atomic—one logical change per commit
