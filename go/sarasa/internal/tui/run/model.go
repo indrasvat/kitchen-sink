@@ -11,52 +11,50 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/manager"
 	"github.com/indrasvat/sarasa/internal/ui"
 )
 
 // PackageStatus represents the upgrade status of a single package.
 type PackageStatus struct {
-	Package   manager.Package
-	Status    string // "pending", "upgrading", "success", "failed", "skipped"
-	Duration  time.Duration
-	Error     error
+	Package  manager.Package
+	Status   string // "pending", "upgrading", "success", "failed", "skipped"
+	Duration time.Duration
+	Error    error
 }
 
 // ManagerResult holds the upgrade results for a manager.
 type ManagerResult struct {
-	Name       string
-	Packages   []*PackageStatus
-	Status     string // "pending", "checking", "upgrading", "done", "error"
-	Error      error
-	Duration   time.Duration
-	StartTime  time.Time
+	Name      string
+	Packages  []*PackageStatus
+	Status    string // "pending", "checking", "upgrading", "done", "error"
+	Error     error
+	Duration  time.Duration
+	StartTime time.Time
 }
 
 // Model is the bubbletea model for the run command.
 type Model struct {
-	managers     []manager.Manager
-	opts         *manager.Options
-	cfg          ManagerConfigProvider
-	results      []*ManagerResult
-	currentMgr   int
-	spinner      spinner.Model
-	progress     progress.Model
-	dryRun       bool
-	skipCleanup  bool
-	running      bool
-	done         bool
-	startTime    time.Time
-	width        int
-	height       int
-	err          error
+	managers    []manager.Manager
+	opts        *manager.Options
+	cfg         ManagerConfigProvider
+	results     []*ManagerResult
+	currentMgr  int
+	spinner     spinner.Model
+	progress    progress.Model
+	dryRun      bool
+	skipCleanup bool
+	running     bool
+	done        bool
+	startTime   time.Time
+	width       int
+	height      int
 
 	// Stats
-	totalPackages   int
-	donePackages    int
-	totalUpgraded   int
-	totalFailed     int
-	totalSkipped    int
+	totalUpgraded int
+	totalFailed   int
+	totalSkipped  int
 }
 
 // ManagerConfigProvider provides per-manager config.
@@ -75,8 +73,6 @@ type (
 		duration time.Duration
 		err      error
 	}
-	tickMsg      time.Time
-	progressMsg  float64
 )
 
 // New creates a new run TUI model.
@@ -150,7 +146,12 @@ func (m Model) runManager(index int) tea.Cmd {
 
 		// Run cleanup if not dry run and not skipped
 		if err == nil && !m.dryRun && !m.skipCleanup {
-			_ = mgr.Cleanup(ctx)
+			if cleanupErr := mgr.Cleanup(ctx); cleanupErr != nil {
+				logger.WithManager(mgr.Name()).Warn("Cleanup failed",
+					"error", cleanupErr.Error(),
+					"action", "cleanup",
+				)
+			}
 		}
 
 		return managerDoneMsg{

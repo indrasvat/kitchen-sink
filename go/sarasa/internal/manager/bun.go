@@ -41,7 +41,12 @@ func (b *Bun) CheckOutdated(ctx context.Context) ([]Package, error) {
 	cmd := exec.CommandContext(ctx, "bun", "pm", "ls", "-g")
 	output, err := cmd.Output()
 	if err != nil {
-		// No global packages or command failed - return empty list
+		// No global packages or command failed - log and return empty list
+		log := logger.WithManager(b.Name())
+		log.Debug("Failed to list global packages, treating as empty",
+			"error", err.Error(),
+			"action", "check_outdated",
+		)
 		return []Package{}, nil //nolint:nilerr // intentional: empty list on error
 	}
 

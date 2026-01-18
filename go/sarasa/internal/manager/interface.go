@@ -4,6 +4,14 @@ import (
 	"context"
 )
 
+// Manager name constants.
+const (
+	ManagerBrew = "brew"
+	ManagerNPM  = "npm"
+	ManagerPipx = "pipx"
+	ManagerBun  = "bun"
+)
+
 // Package represents a package that can be upgraded.
 type Package struct {
 	Name    string `json:"name"`

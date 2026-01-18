@@ -24,22 +24,15 @@ type ManagerStatus struct {
 
 // Model is the bubbletea model for the status command.
 type Model struct {
-	managers    []string
-	opts        *manager.Options
-	statuses    map[string]*ManagerStatus
-	loadOrder   []string
-	spinner     spinner.Model
-	loading     bool
-	done        bool
-	width       int
-	height      int
-	err         error
-}
-
-// managerLoadedMsg is sent when a manager's status is loaded.
-type managerLoadedMsg struct {
-	name     string
-	status   *ManagerStatus
+	managers  []string
+	opts      *manager.Options
+	statuses  map[string]*ManagerStatus
+	loadOrder []string
+	spinner   spinner.Model
+	loading   bool
+	done      bool
+	width     int
+	height    int
 }
 
 // allLoadedMsg is sent when all managers are loaded.
@@ -181,13 +174,14 @@ func (m Model) View() string {
 		if status.Loading {
 			continue
 		}
-		if !status.Available {
+		switch {
+		case !status.Available:
 			totalUnavailable++
-		} else if status.Error != nil {
+		case status.Error != nil:
 			totalErrors++
-		} else if len(status.Outdated) > 0 {
+		case len(status.Outdated) > 0:
 			totalOutdated += len(status.Outdated)
-		} else {
+		default:
 			totalUpToDate++
 		}
 	}
@@ -222,15 +216,16 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 	// Panel content (no emoji inside)
 	var content strings.Builder
 
-	if status.Loading {
+	switch {
+	case status.Loading:
 		content.WriteString(fmt.Sprintf("%s Loading...", m.spinner.View()))
-	} else if !status.Available {
+	case !status.Available:
 		content.WriteString(ui.StyleMuted.Render(ui.IconCross + " Not installed"))
-	} else if status.Error != nil {
+	case status.Error != nil:
 		content.WriteString(ui.StyleError.Render(ui.IconCross + " " + status.Error.Error()))
-	} else if len(status.Outdated) == 0 {
+	case len(status.Outdated) == 0:
 		content.WriteString(ui.StyleSuccess.Render(ui.IconCheck + " All up to date"))
-	} else {
+	default:
 		outdatedCount := ui.StyleWarning.Render(fmt.Sprintf("%d outdated", len(status.Outdated)))
 		content.WriteString(fmt.Sprintf("%s\n", outdatedCount))
 

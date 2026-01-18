@@ -117,9 +117,10 @@ func runRunTUI(managers []manager.Manager, opts *manager.Options, cfg runTUI.Man
 		upgraded := 0
 		failed := 0
 		for _, pkg := range result.Packages {
-			if pkg.Status == "success" {
+			switch pkg.Status {
+			case "success":
 				upgraded++
-			} else if pkg.Status == "failed" {
+			case "failed":
 				failed++
 			}
 		}
@@ -136,6 +137,7 @@ func runRunTUI(managers []manager.Manager, opts *manager.Options, cfg runTUI.Man
 	return nil
 }
 
+//nolint:gocyclo // plain-text renderer with many formatting conditionals
 func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.ManagerConfigProvider, styled bool) error {
 	ctx := context.Background()
 	log := logger.Get()
@@ -165,13 +167,13 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 
 	managerColor := func(name string) string {
 		switch name {
-		case "brew":
+		case manager.ManagerBrew:
 			return yellow
-		case "npm":
+		case manager.ManagerNPM:
 			return red
-		case "pipx":
+		case manager.ManagerPipx:
 			return blue
-		case "bun":
+		case manager.ManagerBun:
 			return brightMagenta
 		default:
 			return brightCyan

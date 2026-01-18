@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/indrasvat/sarasa/internal/logger"
 )
 
 const (
@@ -171,8 +173,10 @@ func Install(cfg *Config) error {
 		return err
 	}
 
-	// Unload existing agent if present
-	_ = Unload()
+	// Unload existing agent if present (ignore "not loaded" errors)
+	if err := Unload(); err != nil && !strings.Contains(err.Error(), "Could not find specified service") {
+		logger.Get().Debug("Failed to unload existing agent", "error", err.Error())
+	}
 
 	// Write plist file
 	if err := os.WriteFile(plistPath, plist, 0644); err != nil {
@@ -185,8 +189,10 @@ func Install(cfg *Config) error {
 
 // Uninstall removes the launchd agent.
 func Uninstall() error {
-	// Unload first
-	_ = Unload()
+	// Unload first (ignore "not loaded" errors)
+	if err := Unload(); err != nil && !strings.Contains(err.Error(), "Could not find specified service") {
+		logger.Get().Debug("Failed to unload agent during uninstall", "error", err.Error())
+	}
 
 	// Remove plist file
 	plistPath := PlistPath()

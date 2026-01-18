@@ -149,17 +149,17 @@ func runStatusPlain(managerNames []string, opts *manager.Options, styled bool) e
 
 	// ANSI codes
 	const (
-		bold        = "\033[1m"
-		dim         = "\033[2m"
-		red         = "\033[31m"
-		green       = "\033[32m"
-		yellow      = "\033[33m"
-		blue        = "\033[34m"
-		brightCyan  = "\033[96m"
-		brightGreen = "\033[92m"
-		brightYellow = "\033[93m"
+		bold          = "\033[1m"
+		dim           = "\033[2m"
+		red           = "\033[31m"
+		green         = "\033[32m"
+		yellow        = "\033[33m"
+		blue          = "\033[34m"
+		brightCyan    = "\033[96m"
+		brightGreen   = "\033[92m"
+		brightYellow  = "\033[93m"
 		brightMagenta = "\033[95m"
-		white       = "\033[37m"
+		white         = "\033[37m"
 	)
 
 	managerColor := func(name string) string {

@@ -217,5 +217,5 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 	b.WriteString(mutedStyle.Render("  Use \"sarasa [command] --help\" for more information about a command."))
 	b.WriteString("\n\n")
 
-	fmt.Fprint(cmd.OutOrStdout(), b.String())
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), b.String())
 }
