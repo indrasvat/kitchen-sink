@@ -1,0 +1,7 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+pre-push:
+  commands:
+    ci:
+      run: make ci

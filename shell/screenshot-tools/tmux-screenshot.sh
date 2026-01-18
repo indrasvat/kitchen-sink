@@ -125,7 +125,6 @@ EOF
 # Parse command line arguments
 # Note: macOS uses BSD getopt, not GNU getopt, so we need to handle this carefully
 ARGS=("$@")
-PARSED_ARGS=()
 COMMAND_ARGS=()
 FOUND_SEPARATOR=false
 
@@ -410,8 +409,7 @@ APPLESCRIPT="${APPLESCRIPT}
 end tell"
 
 # Execute AppleScript and get window ID
-ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1)
-if [ $? -ne 0 ]; then
+if ! ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1); then
     log_error "Failed to create iTerm window or get window ID"
     log_error "AppleScript output: $ITERM_WINDOW_ID"
     exit 1
@@ -467,6 +465,7 @@ log_debug "Output file path: ${OUTPUT_FILE}"
 log_debug "screencapture command: screencapture ${SCREENCAPTURE_OPTS} \"${OUTPUT_FILE}\""
 
 # Try to capture the screenshot
+# shellcheck disable=SC2086 # SCREENCAPTURE_OPTS needs word splitting
 if ! screencapture ${SCREENCAPTURE_OPTS} "${OUTPUT_FILE}" 2>&1; then
     log_error "screencapture command failed"
     log_error "Attempting fallback without window ID..."
@@ -494,6 +493,7 @@ if [ ! -f "${OUTPUT_FILE}" ]; then
         mv "${WORKING_DIR}/screenshot.png" "${OUTPUT_FILE}"
     else
         log_error "Directory contents of $(pwd):"
+        # shellcheck disable=SC2012 # Using ls for debug output is acceptable
         ls -la "$(pwd)" | head -10
         
         # Try one more time with interactive mode

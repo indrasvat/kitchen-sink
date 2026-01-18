@@ -208,12 +208,14 @@ install_gbdk() {
   else
     log_info "Add this to your shell config (~/.zshrc or ~/.bashrc):"
     printf '  export GBDK_HOME="%s"\n' "$GBDK_INSTALL_DIR"
+    # shellcheck disable=SC2016 # Intentional: $GBDK_HOME should appear literally
     printf '  export PATH="$GBDK_HOME/bin:$PATH"\n'
   fi
 }
 
 configure_shell_rc_for_gbdk() {
   local line1="export GBDK_HOME=\"$GBDK_INSTALL_DIR\""
+  # shellcheck disable=SC2016 # Intentional: $GBDK_HOME should appear literally
   local line2='export PATH="$GBDK_HOME/bin:$PATH"'
 
   local shell_rc=""

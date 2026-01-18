@@ -7,12 +7,10 @@
 # ]
 # ///
 
-import os
 import sys
 import tomli
 import networkx as nx
 from pathlib import Path
-from rich import print
 from rich.console import Console
 
 console = Console()

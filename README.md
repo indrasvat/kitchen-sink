@@ -14,6 +14,8 @@ A curated collection of useful scripts for macOS automation, development setup, 
 │   ├── automation/          # Task automation scripts
 │   ├── dev-tools/           # Developer productivity tools
 │   └── games/               # Fun stuff
+├── go/
+│   └── sarasa/              # Automated global package manager upgrades
 ├── guides/
 │   └── remote-claude-access/ # Remote Claude Code CLI from iPhone
 └── applescript/             # macOS automation scripts
@@ -125,17 +127,93 @@ uv run python/dev-tools/generate-synthetic-rust-code.py --lines 10000 -o test.rs
 uv run python/games/space-war.py
 ```
 
+## Go Tools
+
+### Sarasa
+
+[`sarasa`](go/sarasa/) is a CLI tool for automated global package manager upgrades with scheduled background execution via launchd.
+
+**Supported managers:** 🍺 brew · 📦 npm · 🐍 pipx · 🥟 bun
+
+| Command | Description |
+|---------|-------------|
+| `sarasa status` | Check for outdated packages (interactive TUI) |
+| `sarasa run` | Upgrade all outdated packages |
+| `sarasa run --dry-run` | Preview upgrades without applying |
+| `sarasa logs` | Interactive log viewer with search and filtering |
+| `sarasa schedule install` | Enable daily scheduled upgrades via launchd |
+
+**Features:**
+- Interactive TUI with colored output and progress indicators
+- Per-manager skip lists and major version upgrade control
+- Structured JSON logging with 30-day retention
+- Graceful degradation to plain text when piped
+
+```bash
+# Install sarasa
+cd go/sarasa && make install
+
+# Check what needs upgrading
+sarasa status
+
+# Preview upgrades (dry run)
+sarasa run --dry-run
+
+# Upgrade everything
+sarasa run
+
+# View upgrade history
+sarasa logs
+
+# Enable daily scheduled upgrades
+sarasa schedule install
+```
+
+**Configuration:** `~/.config/sarasa/config.toml`
+
+```toml
+managers = ["brew", "npm", "pipx", "bun"]
+
+[skip]
+brew = ["postgresql@14"]  # Packages to skip
+npm = []
+
+[schedule]
+times = ["08:00", "14:00", "22:00"]
+```
+
 ## Guides
 
 | Guide | Description |
 |-------|-------------|
 | [`remote-claude-access/`](guides/remote-claude-access/) | Access Claude Code CLI from iPhone via Tailscale + Termius/Blink Shell |
 
+## Development
+
+```bash
+# Install all development tools (macOS)
+make tools
+
+# Install git hooks (runs lints before push)
+make hooks
+
+# Run all lints and tests
+make ci
+
+# Run individual linters
+make lint-shell    # shellcheck
+make lint-python   # ruff
+make lint-go       # golangci-lint
+```
+
+The repo uses [lefthook](https://github.com/evilmartians/lefthook) for git hooks. The pre-push hook runs `make ci` to ensure all lints and tests pass before pushing.
+
 ## Requirements
 
 - **macOS** (most scripts are macOS-specific)
 - **uv** for Python scripts: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - **Homebrew** for shell scripts: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+- **Go 1.23+** for Go tools: `brew install go`
 
 ## License
 

@@ -37,6 +37,7 @@ DEBUG=false
 FONT_SIZE=""
 BACKGROUND_COLOR=""
 MAXIMIZE_WINDOW=false
+# shellcheck disable=SC2034 # LAYOUT_FILE is parsed but not yet implemented
 LAYOUT_FILE=""
 
 # Color codes for output
@@ -128,7 +129,6 @@ EOF
 
 # Parse command line arguments
 ARGS=("$@")
-PARSED_ARGS=()
 COMMAND_ARGS=()
 FOUND_SEPARATOR=false
 
@@ -198,6 +198,7 @@ while [ $i -lt ${#ARGS[@]} ]; do
             ((i+=2))
             ;;
         -l|--layout)
+            # shellcheck disable=SC2034 # LAYOUT_FILE is parsed but not yet implemented
             LAYOUT_FILE="${ARGS[$((i+1))]}"
             ((i+=2))
             ;;
@@ -458,8 +459,7 @@ APPLESCRIPT="${APPLESCRIPT}
 end tell"
 
 # Execute AppleScript and get window ID
-ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1)
-if [ $? -ne 0 ]; then
+if ! ITERM_WINDOW_ID=$(osascript -e "$APPLESCRIPT" 2>&1); then
     log_error "Failed to create iTerm window or get window ID"
     log_error "AppleScript output: $ITERM_WINDOW_ID"
     exit 1
@@ -497,6 +497,7 @@ log_info "Taking screenshot..."
 log_debug "screencapture command: screencapture ${SCREENCAPTURE_OPTS} \"${OUTPUT_FILE}\""
 
 # Try to capture the screenshot
+# shellcheck disable=SC2086 # SCREENCAPTURE_OPTS needs word splitting
 if ! screencapture ${SCREENCAPTURE_OPTS} "${OUTPUT_FILE}" 2>&1; then
     log_error "screencapture command failed"
     log_error "Attempting fallback without window ID..."

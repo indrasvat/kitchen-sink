@@ -6,7 +6,7 @@ DELAY=${DELAY:-1}
 # Check if a command was provided
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <command>"
-    echo "\tExample: $0 kubectl get po --watch --no-headers"
+    printf "\tExample: %s kubectl get po --watch --no-headers\n" "$0"
     exit 1
 fi
 

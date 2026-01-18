@@ -1,4 +1,4 @@
-.PHONY: help install install-shell install-python uninstall lint lint-shell lint-python list
+.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks tools tools-ci
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
@@ -17,7 +17,7 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 
-install: install-shell install-python ## Install all scripts to ~/.local/bin
+install: hooks install-shell install-python install-go ## Install all scripts to ~/.local/bin
 	@echo -e "$(GREEN)✓$(NC) All scripts installed to $(BIN_DIR)"
 
 install-shell: ## Install shell scripts
@@ -41,6 +41,12 @@ install-python: ## Install Python scripts
 	@ln -sf $(CURDIR)/python/games/space-war.py $(BIN_DIR)/space-war
 	@echo -e "  $(GREEN)✓$(NC) Python scripts linked"
 
+install-go: ## Build and install Go tools
+	@mkdir -p $(BIN_DIR)
+	@echo "Building Go tools..."
+	@cd $(CURDIR)/go/sarasa && go build -o $(BIN_DIR)/sarasa .
+	@echo -e "  $(GREEN)✓$(NC) Go tools built and installed"
+
 uninstall: ## Remove installed scripts from ~/.local/bin
 	@echo "Removing installed scripts..."
 	@rm -f $(BIN_DIR)/iterm2-screenshot
@@ -54,19 +60,25 @@ uninstall: ## Remove installed scripts from ~/.local/bin
 	@rm -f $(BIN_DIR)/pyproject-deps-graph
 	@rm -f $(BIN_DIR)/ntp-time
 	@rm -f $(BIN_DIR)/space-war
+	@rm -f $(BIN_DIR)/sarasa
 	@echo -e "$(GREEN)✓$(NC) Scripts removed"
 
-lint: lint-shell lint-python ## Run all linters
+lint: lint-shell lint-python lint-go ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Linting shell scripts..."
-	@shellcheck shell/**/*.sh || true
-	@echo -e "$(GREEN)✓$(NC) Shell lint complete"
+	@shellcheck shell/**/*.sh
+	@echo -e "  $(GREEN)✓$(NC) Shell lint passed"
 
 lint-python: ## Lint Python scripts with ruff
 	@echo "Linting Python scripts..."
-	@uv run ruff check python/ || true
-	@echo -e "$(GREEN)✓$(NC) Python lint complete"
+	@uvx ruff check python/
+	@echo -e "  $(GREEN)✓$(NC) Python lint passed"
+
+lint-go: ## Lint Go code with golangci-lint
+	@echo "Linting Go code..."
+	@cd $(CURDIR)/go/sarasa && $(MAKE) lint
+	@echo -e "  $(GREEN)✓$(NC) Go lint passed"
 
 list: ## List all available scripts
 	@echo ""
@@ -86,3 +98,45 @@ list: ## List all available scripts
 	@echo "  games/"
 	@ls -1 python/games/*.py 2>/dev/null | xargs -I{} basename {} .py | sed 's/^/    /'
 	@echo ""
+	@echo -e "$(CYAN)Go Tools$(NC)"
+	@echo "    sarasa - Automated global package manager upgrades"
+	@echo ""
+
+ci: lint test ## Run all lints and tests (used by pre-push hook)
+	@echo -e "$(GREEN)✓ All CI checks passed$(NC)"
+
+test: ## Run all tests
+	@echo "Running Go tests..."
+	@cd $(CURDIR)/go/sarasa && $(MAKE) test
+	@echo -e "  $(GREEN)✓$(NC) Go tests passed"
+
+hooks: ## Install git hooks via lefthook
+	@if command -v lefthook >/dev/null 2>&1; then \
+		lefthook install; \
+		echo -e "$(GREEN)✓$(NC) Git hooks installed via lefthook"; \
+	else \
+		echo -e "$(YELLOW)⚠$(NC)  lefthook not found. Install with:"; \
+		echo "    brew install lefthook"; \
+		echo "  Then run 'make hooks' to install git hooks."; \
+	fi
+
+tools: ## Install development tools (macOS)
+	@echo "Checking development tools..."
+	@command -v shellcheck >/dev/null 2>&1 || { echo "  Installing shellcheck..."; brew install shellcheck; }
+	@command -v uv >/dev/null 2>&1 || { echo "  Installing uv..."; brew install uv; }
+	@command -v go >/dev/null 2>&1 || { echo "  Installing go..."; brew install go; }
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "  Installing golangci-lint..."; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0; }
+	@command -v lefthook >/dev/null 2>&1 || { echo "  Installing lefthook..."; go install github.com/evilmartians/lefthook@latest; }
+	@echo -e "$(GREEN)✓$(NC) All tools available"
+	@echo ""
+	@echo "Versions:"
+	@echo -n "  shellcheck: " && shellcheck --version | head -2 | tail -1
+	@echo -n "  uv: " && uv --version
+	@echo -n "  go: " && go version | cut -d' ' -f3
+	@echo -n "  golangci-lint: " && golangci-lint --version | cut -d' ' -f4
+	@echo -n "  lefthook: " && lefthook version
+
+tools-ci: ## Install CI tools (Go only)
+	@echo "Installing CI tools..."
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+	@echo -e "$(GREEN)✓$(NC) CI tools installed"
