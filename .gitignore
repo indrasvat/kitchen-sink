@@ -32,6 +32,9 @@ ENV/
 .vscode/
 *.sublime-*
 
+# Claude Code
+.claude/
+
 # Logs
 *.log
 /logs/
