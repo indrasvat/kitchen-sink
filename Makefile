@@ -125,7 +125,7 @@ tools: ## Install development tools (macOS)
 	@command -v shellcheck >/dev/null 2>&1 || { echo "  Installing shellcheck..."; brew install shellcheck; }
 	@command -v uv >/dev/null 2>&1 || { echo "  Installing uv..."; brew install uv; }
 	@command -v go >/dev/null 2>&1 || { echo "  Installing go..."; brew install go; }
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "  Installing golangci-lint..."; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6; }
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "  Installing golangci-lint..."; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0; }
 	@command -v lefthook >/dev/null 2>&1 || { echo "  Installing lefthook..."; go install github.com/evilmartians/lefthook@latest; }
 	@echo -e "$(GREEN)✓$(NC) All tools available"
 	@echo ""
@@ -138,5 +138,5 @@ tools: ## Install development tools (macOS)
 
 tools-ci: ## Install CI tools (Go only)
 	@echo "Installing CI tools..."
-	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
 	@echo -e "$(GREEN)✓$(NC) CI tools installed"
