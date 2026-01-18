@@ -45,6 +45,21 @@ uv run python/automation/ntp.py pool.ntp.org
 - Makefiles: tab indentation
 - All files: LF line endings, UTF-8, final newline required
 
+## Commit Convention
+
+Use Conventional Commits: `type(scope): summary`
+
+**Format:**
+- One-liner: `type(scope): summary` (imperative mood, lowercase, no period)
+- Types: feat, fix, docs, style, refactor, test, chore, perf, build
+- Scopes: based on the logical components of the app
+
+**Granularity:**
+- Keep commits *reasonably* atomic—one logical change per commit
+- Don't be overly granular: related changes (e.g., a feature + its tests) belong together
+- A single commit can touch multiple files if they're part of one coherent change
+- Commit early, commit often, but group related work sensibly
+
 ## CI
 
 GitHub Actions runs shellcheck on `shell/` and ruff on `python/` for PRs to main.
