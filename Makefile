@@ -1,4 +1,4 @@
-.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list
+.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
@@ -17,7 +17,7 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 
-install: install-shell install-python install-go ## Install all scripts to ~/.local/bin
+install: hooks install-shell install-python install-go ## Install all scripts to ~/.local/bin
 	@echo -e "$(GREEN)✓$(NC) All scripts installed to $(BIN_DIR)"
 
 install-shell: ## Install shell scripts
@@ -67,18 +67,18 @@ lint: lint-shell lint-python lint-go ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Linting shell scripts..."
-	@shellcheck shell/**/*.sh || true
-	@echo -e "$(GREEN)✓$(NC) Shell lint complete"
+	@shellcheck shell/**/*.sh
+	@echo -e "  $(GREEN)✓$(NC) Shell lint passed"
 
 lint-python: ## Lint Python scripts with ruff
 	@echo "Linting Python scripts..."
-	@uv run ruff check python/ || true
-	@echo -e "$(GREEN)✓$(NC) Python lint complete"
+	@uv run ruff check python/
+	@echo -e "  $(GREEN)✓$(NC) Python lint passed"
 
 lint-go: ## Lint Go code with golangci-lint
 	@echo "Linting Go code..."
-	@cd $(CURDIR)/go/sarasa && golangci-lint run ./... || true
-	@echo -e "$(GREEN)✓$(NC) Go lint complete"
+	@cd $(CURDIR)/go/sarasa && $(MAKE) lint
+	@echo -e "  $(GREEN)✓$(NC) Go lint passed"
 
 list: ## List all available scripts
 	@echo ""
@@ -101,3 +101,21 @@ list: ## List all available scripts
 	@echo -e "$(CYAN)Go Tools$(NC)"
 	@echo "    sarasa - Automated global package manager upgrades"
 	@echo ""
+
+ci: lint test ## Run all lints and tests (used by pre-push hook)
+	@echo -e "$(GREEN)✓ All CI checks passed$(NC)"
+
+test: ## Run all tests
+	@echo "Running Go tests..."
+	@cd $(CURDIR)/go/sarasa && $(MAKE) test
+	@echo -e "  $(GREEN)✓$(NC) Go tests passed"
+
+hooks: ## Install git hooks via lefthook
+	@if command -v lefthook >/dev/null 2>&1; then \
+		lefthook install; \
+		echo -e "$(GREEN)✓$(NC) Git hooks installed via lefthook"; \
+	else \
+		echo -e "$(YELLOW)⚠$(NC)  lefthook not found. Install with:"; \
+		echo "    brew install lefthook"; \
+		echo "  Then run 'make hooks' to install git hooks."; \
+	fi
