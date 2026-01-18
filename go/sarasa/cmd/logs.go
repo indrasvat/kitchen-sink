@@ -254,14 +254,14 @@ func runLogsPlain(entries []logsTUI.LogEntry, styled bool, useUTC bool) error {
 
 	// ANSI codes
 	const (
-		bold        = "\033[1m"
-		dim         = "\033[2m"
-		red         = "\033[31m"
-		green       = "\033[32m"
-		yellow      = "\033[33m"
-		blue        = "\033[34m"
-		brightCyan  = "\033[96m"
-		brightGreen = "\033[92m"
+		bold          = "\033[1m"
+		dim           = "\033[2m"
+		red           = "\033[31m"
+		green         = "\033[32m"
+		yellow        = "\033[33m"
+		blue          = "\033[34m"
+		brightCyan    = "\033[96m"
+		brightGreen   = "\033[92m"
 		brightMagenta = "\033[95m"
 	)
 
