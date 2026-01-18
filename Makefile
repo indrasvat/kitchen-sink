@@ -72,7 +72,7 @@ lint-shell: ## Lint shell scripts with shellcheck
 
 lint-python: ## Lint Python scripts with ruff
 	@echo "Linting Python scripts..."
-	@uv run ruff check python/
+	@uvx ruff check python/
 	@echo -e "  $(GREEN)✓$(NC) Python lint passed"
 
 lint-go: ## Lint Go code with golangci-lint
