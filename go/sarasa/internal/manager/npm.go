@@ -31,8 +31,16 @@ func (n *NPM) Name() string {
 }
 
 func (n *NPM) IsAvailable() bool {
-	_, err := exec.LookPath("npm")
-	return err == nil
+	npmPath, err := exec.LookPath("npm")
+	if err != nil {
+		return false
+	}
+	// Skip if Volta is managing npm - Volta handles global packages differently
+	// and npm outdated -g reports stale data from the Node image
+	if strings.Contains(npmPath, ".volta") {
+		return false
+	}
+	return true
 }
 
 // npmOutdatedPackage represents a package in npm outdated JSON output.
