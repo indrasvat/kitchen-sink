@@ -40,7 +40,7 @@ type Model struct {
 	opts        *manager.Options
 	cfg         ManagerConfigProvider
 	results     []*ManagerResult
-	currentMgr  int
+	activeCount int // Number of managers still running
 	spinner     spinner.Model
 	progress    progress.Model
 	dryRun      bool
@@ -94,6 +94,10 @@ func New(managers []manager.Manager, opts *manager.Options, cfg ManagerConfigPro
 			Status:   "pending",
 			Packages: []*PackageStatus{},
 		}
+		// Set skip list for each manager upfront (before concurrent execution)
+		if cfg != nil {
+			mgr.SetSkipList(cfg.GetSkipList(mgr.Name()))
+		}
 	}
 
 	return Model{
@@ -110,42 +114,34 @@ func New(managers []manager.Manager, opts *manager.Options, cfg ManagerConfigPro
 
 // Init initializes the model.
 func (m Model) Init() tea.Cmd {
-	m.startTime = time.Now()
-	m.running = true
-	return tea.Batch(
-		m.spinner.Tick,
-		m.startNextManager(0),
-	)
-}
+	// Start all managers concurrently
+	cmds := make([]tea.Cmd, 0, len(m.managers)+1)
+	cmds = append(cmds, m.spinner.Tick)
 
-func (m Model) startNextManager(index int) tea.Cmd {
-	if index >= len(m.managers) {
-		return func() tea.Msg {
-			return managerDoneMsg{index: -1} // Signal all done
-		}
+	for i := range m.managers {
+		idx := i // capture loop variable
+		cmds = append(cmds, func() tea.Msg {
+			return managerStartMsg{index: idx}
+		})
 	}
 
-	return func() tea.Msg {
-		return managerStartMsg{index: index}
-	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) runManager(index int) tea.Cmd {
+	mgr := m.managers[index]
+	dryRun := m.dryRun
+	skipCleanup := m.skipCleanup
+
 	return func() tea.Msg {
-		mgr := m.managers[index]
 		ctx := context.Background()
 
-		// Set skip list for this manager
-		if m.cfg != nil {
-			m.opts.SkipList = m.cfg.GetSkipList(mgr.Name())
-		}
-
 		start := time.Now()
-		result, err := mgr.Upgrade(ctx, m.dryRun)
+		result, err := mgr.Upgrade(ctx, dryRun)
 		duration := time.Since(start)
 
 		// Run cleanup if not dry run and not skipped
-		if err == nil && !m.dryRun && !m.skipCleanup {
+		if err == nil && !dryRun && !skipCleanup {
 			if cleanupErr := mgr.Cleanup(ctx); cleanupErr != nil {
 				logger.WithManager(mgr.Name()).Warn("Cleanup failed",
 					"error", cleanupErr.Error(),
@@ -189,18 +185,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case managerStartMsg:
+		// Initialize timing on first manager start
+		if !m.running {
+			m.running = true
+			m.startTime = time.Now()
+		}
 		m.results[msg.index].Status = "upgrading"
 		m.results[msg.index].StartTime = time.Now()
-		m.currentMgr = msg.index
+		m.activeCount++
 		return m, m.runManager(msg.index)
 
 	case managerDoneMsg:
-		if msg.index == -1 {
-			// All managers done
-			m.running = false
-			m.done = true
-			return m, nil
-		}
+		m.activeCount--
 
 		result := m.results[msg.index]
 		result.Duration = msg.duration
@@ -234,8 +230,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Start next manager
-		return m, m.startNextManager(msg.index + 1)
+		// Check if all managers are done
+		if m.activeCount == 0 {
+			m.running = false
+			m.done = true
+		}
+
+		return m, nil
 	}
 
 	return m, nil
@@ -265,7 +266,8 @@ func (m Model) View() string {
 	// Progress bar (only during upgrade)
 	if m.running && !m.dryRun {
 		elapsed := time.Since(m.startTime)
-		progressPct := float64(m.currentMgr) / float64(len(m.managers))
+		completed := len(m.managers) - m.activeCount
+		progressPct := float64(completed) / float64(len(m.managers))
 		b.WriteString(fmt.Sprintf("  %s  %s\n\n", m.progress.ViewAs(progressPct), ui.StyleDuration.Render(formatDuration(elapsed))))
 	}
 

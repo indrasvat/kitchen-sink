@@ -6,10 +6,11 @@ import (
 
 // Manager name constants.
 const (
-	ManagerBrew = "brew"
-	ManagerNPM  = "npm"
-	ManagerPipx = "pipx"
-	ManagerBun  = "bun"
+	ManagerBrew  = "brew"
+	ManagerNPM   = "npm"
+	ManagerVolta = "volta"
+	ManagerPipx  = "pipx"
+	ManagerBun   = "bun"
 )
 
 // Package represents a package that can be upgraded.
@@ -44,6 +45,9 @@ type Manager interface {
 
 	// Cleanup runs cleanup operations (if supported).
 	Cleanup(ctx context.Context) error
+
+	// SetSkipList sets the list of packages to skip.
+	SetSkipList(packages []string)
 }
 
 // Options holds options passed to managers.

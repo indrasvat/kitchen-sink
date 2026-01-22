@@ -2,13 +2,13 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
 )
 
@@ -31,8 +31,20 @@ func (n *NPM) Name() string {
 }
 
 func (n *NPM) IsAvailable() bool {
-	_, err := exec.LookPath("npm")
-	return err == nil
+	npmPath, err := exec.LookPath("npm")
+	if err != nil {
+		return false
+	}
+	// Skip if Volta is managing npm - Volta handles global packages differently
+	// and npm outdated -g reports stale data from the Node image
+	if strings.Contains(npmPath, ".volta") {
+		return false
+	}
+	return true
+}
+
+func (n *NPM) SetSkipList(packages []string) {
+	n.opts.SkipList = packages
 }
 
 // npmOutdatedPackage represents a package in npm outdated JSON output.
@@ -63,8 +75,8 @@ func (n *NPM) CheckOutdated(ctx context.Context) ([]Package, error) {
 	}
 
 	var outdated map[string]npmOutdatedPackage
-	if err := json.Unmarshal(output, &outdated); err != nil {
-		return nil, fmt.Errorf("failed to parse npm outdated output: %w", err)
+	if err := jsonutil.Parse("npm", "outdated", output, &outdated); err != nil {
+		return nil, err
 	}
 
 	var packages []Package
@@ -194,7 +206,7 @@ func (n *NPM) getPackageVersion(ctx context.Context, name string) (string, error
 		} `json:"dependencies"`
 	}
 
-	if err := json.Unmarshal(output, &result); err != nil {
+	if err := jsonutil.Parse("npm", "list", output, &result); err != nil {
 		return "", err
 	}
 

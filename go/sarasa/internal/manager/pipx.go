@@ -31,6 +31,10 @@ func (p *Pipx) IsAvailable() bool {
 	return err == nil
 }
 
+func (p *Pipx) SetSkipList(packages []string) {
+	p.opts.SkipList = packages
+}
+
 func (p *Pipx) CheckOutdated(_ context.Context) ([]Package, error) {
 	// pipx doesn't have a native "outdated" command
 	// We return an empty list and let Upgrade handle everything

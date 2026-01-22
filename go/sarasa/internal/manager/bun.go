@@ -33,6 +33,10 @@ func (b *Bun) IsAvailable() bool {
 	return err == nil
 }
 
+func (b *Bun) SetSkipList(packages []string) {
+	b.opts.SkipList = packages
+}
+
 func (b *Bun) CheckOutdated(ctx context.Context) ([]Package, error) {
 	// bun doesn't have a native outdated command for global packages
 	// We list global packages and then check each one
@@ -117,10 +121,15 @@ func (b *Bun) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error) 
 
 		start := time.Now()
 		cmd := exec.CommandContext(ctx, "bun", "install", "-g", pkg.Name)
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			log.Error("bun install failed",
+				"package", pkg.Name,
+				"error", err.Error(),
+				"output", string(output),
+			)
 			logger.LogUpgradeError(b.Name(), pkg.Name, err, duration)
 			result.Failed = append(result.Failed, pkg)
 		} else {

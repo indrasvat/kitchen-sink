@@ -2,12 +2,12 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
 )
 
@@ -36,6 +36,10 @@ func (b *Brew) IsAvailable() bool {
 	return err == nil
 }
 
+func (b *Brew) SetSkipList(packages []string) {
+	b.opts.SkipList = packages
+}
+
 // brewOutdatedJSON represents the JSON output of `brew outdated --json=v2`.
 type brewOutdatedJSON struct {
 	Formulae []brewFormula `json:"formulae"`
@@ -43,16 +47,16 @@ type brewOutdatedJSON struct {
 }
 
 type brewFormula struct {
-	Name              string   `json:"name"`
-	InstalledVersions []string `json:"installed_versions"`
-	CurrentVersion    string   `json:"current_version"`
-	PinnedVersion     string   `json:"pinned_version"`
+	Name              string                 `json:"name"`
+	InstalledVersions jsonutil.StringOrSlice `json:"installed_versions"`
+	CurrentVersion    string                 `json:"current_version"`
+	PinnedVersion     string                 `json:"pinned_version"`
 }
 
 type brewCask struct {
-	Name              string `json:"name"`
-	InstalledVersions string `json:"installed_versions"`
-	CurrentVersion    string `json:"current_version"`
+	Name              string                 `json:"name"`
+	InstalledVersions jsonutil.StringOrSlice `json:"installed_versions"`
+	CurrentVersion    string                 `json:"current_version"`
 }
 
 func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
@@ -82,8 +86,8 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 	}
 
 	var outdated brewOutdatedJSON
-	if err := json.Unmarshal(output, &outdated); err != nil {
-		return nil, fmt.Errorf("failed to parse brew outdated output: %w", err)
+	if err := jsonutil.Parse("brew", "outdated", output, &outdated); err != nil {
+		return nil, err
 	}
 
 	var packages []Package
@@ -93,13 +97,9 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		if b.opts.ShouldSkip(f.Name) {
 			continue
 		}
-		current := ""
-		if len(f.InstalledVersions) > 0 {
-			current = f.InstalledVersions[0]
-		}
 		packages = append(packages, Package{
 			Name:    f.Name,
-			Current: current,
+			Current: f.InstalledVersions.First(),
 			Latest:  f.CurrentVersion,
 		})
 	}
@@ -111,7 +111,7 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		}
 		packages = append(packages, Package{
 			Name:    c.Name,
-			Current: c.InstalledVersions,
+			Current: c.InstalledVersions.First(),
 			Latest:  c.CurrentVersion,
 		})
 	}
@@ -155,19 +155,83 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 
 		start := time.Now()
 		cmd := exec.CommandContext(ctx, "brew", "upgrade", pkg.Name)
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			log.Error("brew upgrade failed",
+				"package", pkg.Name,
+				"error", err.Error(),
+				"output", string(output),
+			)
 			logger.LogUpgradeError(b.Name(), pkg.Name, err, duration)
 			result.Failed = append(result.Failed, pkg)
+			continue
+		}
+
+		// Verify upgrade by checking installed version
+		newVersion, verifyErr := b.getInstalledVersion(ctx, pkg.Name)
+		if verifyErr != nil {
+			log.Warn("Could not verify upgrade",
+				"package", pkg.Name,
+				"error", verifyErr.Error(),
+			)
+		}
+
+		if newVersion != "" && newVersion == pkg.Current {
+			log.Error("brew upgrade completed but version unchanged",
+				"package", pkg.Name,
+				"expected", pkg.Latest,
+				"actual", newVersion,
+			)
+			result.Failed = append(result.Failed, pkg)
 		} else {
-			logger.LogUpgrade(b.Name(), pkg.Name, pkg.Current, pkg.Latest, duration)
+			actualNew := pkg.Latest
+			if newVersion != "" {
+				actualNew = newVersion
+			}
+			logger.LogUpgrade(b.Name(), pkg.Name, pkg.Current, actualNew, duration)
 			result.Upgraded = append(result.Upgraded, pkg)
 		}
 	}
 
 	return result, nil
+}
+
+// getInstalledVersion returns the currently installed version of a brew package.
+func (b *Brew) getInstalledVersion(ctx context.Context, name string) (string, error) {
+	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", name)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Formulae []struct {
+			Installed []struct {
+				Version string `json:"version"`
+			} `json:"installed"`
+		} `json:"formulae"`
+		Casks []struct {
+			Installed jsonutil.StringOrSlice `json:"installed"`
+		} `json:"casks"`
+	}
+
+	if err := jsonutil.Parse("brew", "info", output, &result); err != nil {
+		return "", err
+	}
+
+	// Check formulae
+	if len(result.Formulae) > 0 && len(result.Formulae[0].Installed) > 0 {
+		return result.Formulae[0].Installed[0].Version, nil
+	}
+
+	// Check casks
+	if len(result.Casks) > 0 {
+		return result.Casks[0].Installed.First(), nil
+	}
+
+	return "", nil
 }
 
 func (b *Brew) Cleanup(ctx context.Context) error {

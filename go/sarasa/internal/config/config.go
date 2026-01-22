@@ -15,14 +15,16 @@ type Config struct {
 	Logging  LoggingConfig  `toml:"logging"`
 	Brew     BrewConfig     `toml:"brew"`
 	NPM      NPMConfig      `toml:"npm"`
+	Volta    VoltaConfig    `toml:"volta"`
 }
 
 // SkipConfig holds packages to skip per manager.
 type SkipConfig struct {
-	Brew []string `toml:"brew"`
-	NPM  []string `toml:"npm"`
-	Pipx []string `toml:"pipx"`
-	Bun  []string `toml:"bun"`
+	Brew  []string `toml:"brew"`
+	NPM   []string `toml:"npm"`
+	Volta []string `toml:"volta"`
+	Pipx  []string `toml:"pipx"`
+	Bun   []string `toml:"bun"`
 }
 
 // ScheduleConfig holds scheduling configuration.
@@ -47,16 +49,22 @@ type NPMConfig struct {
 	SkipMajor bool `toml:"skip_major"`
 }
 
+// VoltaConfig holds Volta-specific configuration.
+type VoltaConfig struct {
+	SkipMajor bool `toml:"skip_major"`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
 	return &Config{
-		Managers: []string{"brew", "npm", "pipx", "bun"},
+		Managers: []string{"brew", "volta", "pipx", "bun"},
 		Skip: SkipConfig{
-			Brew: []string{},
-			NPM:  []string{},
-			Pipx: []string{},
-			Bun:  []string{},
+			Brew:  []string{},
+			NPM:   []string{},
+			Volta: []string{},
+			Pipx:  []string{},
+			Bun:   []string{},
 		},
 		Schedule: ScheduleConfig{
 			Times: []string{"08:00", "14:00", "22:00"},
@@ -70,6 +78,9 @@ func DefaultConfig() *Config {
 			Greedy: false,
 		},
 		NPM: NPMConfig{
+			SkipMajor: false,
+		},
+		Volta: VoltaConfig{
 			SkipMajor: false,
 		},
 	}
@@ -165,6 +176,8 @@ func (c *Config) GetSkipList(manager string) []string {
 		return c.Skip.Brew
 	case "npm":
 		return c.Skip.NPM
+	case "volta":
+		return c.Skip.Volta
 	case "pipx":
 		return c.Skip.Pipx
 	case "bun":
