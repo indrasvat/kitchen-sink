@@ -159,19 +159,83 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 
 		start := time.Now()
 		cmd := exec.CommandContext(ctx, "brew", "upgrade", pkg.Name)
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			log.Error("brew upgrade failed",
+				"package", pkg.Name,
+				"error", err.Error(),
+				"output", string(output),
+			)
 			logger.LogUpgradeError(b.Name(), pkg.Name, err, duration)
 			result.Failed = append(result.Failed, pkg)
+			continue
+		}
+
+		// Verify upgrade by checking installed version
+		newVersion, verifyErr := b.getInstalledVersion(ctx, pkg.Name)
+		if verifyErr != nil {
+			log.Warn("Could not verify upgrade",
+				"package", pkg.Name,
+				"error", verifyErr.Error(),
+			)
+		}
+
+		if newVersion != "" && newVersion == pkg.Current {
+			log.Error("brew upgrade completed but version unchanged",
+				"package", pkg.Name,
+				"expected", pkg.Latest,
+				"actual", newVersion,
+			)
+			result.Failed = append(result.Failed, pkg)
 		} else {
-			logger.LogUpgrade(b.Name(), pkg.Name, pkg.Current, pkg.Latest, duration)
+			actualNew := pkg.Latest
+			if newVersion != "" {
+				actualNew = newVersion
+			}
+			logger.LogUpgrade(b.Name(), pkg.Name, pkg.Current, actualNew, duration)
 			result.Upgraded = append(result.Upgraded, pkg)
 		}
 	}
 
 	return result, nil
+}
+
+// getInstalledVersion returns the currently installed version of a brew package.
+func (b *Brew) getInstalledVersion(ctx context.Context, name string) (string, error) {
+	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", name)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Formulae []struct {
+			Installed []struct {
+				Version string `json:"version"`
+			} `json:"installed"`
+		} `json:"formulae"`
+		Casks []struct {
+			Installed string `json:"installed"`
+		} `json:"casks"`
+	}
+
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", err
+	}
+
+	// Check formulae
+	if len(result.Formulae) > 0 && len(result.Formulae[0].Installed) > 0 {
+		return result.Formulae[0].Installed[0].Version, nil
+	}
+
+	// Check casks
+	if len(result.Casks) > 0 {
+		return result.Casks[0].Installed, nil
+	}
+
+	return "", nil
 }
 
 func (b *Brew) Cleanup(ctx context.Context) error {
