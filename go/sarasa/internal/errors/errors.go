@@ -38,30 +38,6 @@ func NewCommandError(cmd string, args []string, stdout, stderr string, exitCode 
 	}
 }
 
-// ParseError represents a parsing failure.
-type ParseError struct {
-	Manager string
-	Data    string
-	Err     error
-}
-
-func (e *ParseError) Error() string {
-	return fmt.Sprintf("failed to parse %s output: %v", e.Manager, e.Err)
-}
-
-func (e *ParseError) Unwrap() error {
-	return e.Err
-}
-
-// NewParseError creates a new ParseError.
-func NewParseError(manager, data string, err error) *ParseError {
-	return &ParseError{
-		Manager: manager,
-		Data:    data,
-		Err:     err,
-	}
-}
-
 // UpgradeError represents an upgrade failure.
 type UpgradeError struct {
 	Manager string
@@ -150,12 +126,6 @@ func NewManagerUnavailableError(manager string) *ManagerUnavailableError {
 func IsCommandError(err error) bool {
 	var cmdErr *CommandError
 	return errors.As(err, &cmdErr)
-}
-
-// IsParseError checks if an error is a ParseError.
-func IsParseError(err error) bool {
-	var parseErr *ParseError
-	return errors.As(err, &parseErr)
 }
 
 // IsUpgradeError checks if an error is an UpgradeError.

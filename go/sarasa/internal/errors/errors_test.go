@@ -29,25 +29,6 @@ func TestCommandError_NoStderr(t *testing.T) {
 	}
 }
 
-func TestParseError(t *testing.T) {
-	innerErr := fmt.Errorf("invalid JSON")
-	err := errors.NewParseError("brew", `{"invalid":`, innerErr)
-
-	if !errors.IsParseError(err) {
-		t.Error("expected IsParseError to return true")
-	}
-
-	expected := "failed to parse brew output: invalid JSON"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-
-	// Test unwrap
-	if unwrapped := err.Unwrap(); unwrapped == nil || unwrapped.Error() != innerErr.Error() {
-		t.Error("expected Unwrap to return inner error")
-	}
-}
-
 func TestUpgradeError(t *testing.T) {
 	innerErr := fmt.Errorf("permission denied")
 	err := errors.NewUpgradeError("npm", "typescript", "5.0.0", "5.1.0", "npm ERR!", innerErr)
@@ -105,9 +86,6 @@ func TestIsCheckers_NilError(t *testing.T) {
 	if errors.IsCommandError(nil) {
 		t.Error("IsCommandError(nil) should return false")
 	}
-	if errors.IsParseError(nil) {
-		t.Error("IsParseError(nil) should return false")
-	}
 	if errors.IsUpgradeError(nil) {
 		t.Error("IsUpgradeError(nil) should return false")
 	}
@@ -127,9 +105,6 @@ func TestIsCheckers_RegularError(t *testing.T) {
 
 	if errors.IsCommandError(err) {
 		t.Error("IsCommandError should return false for regular error")
-	}
-	if errors.IsParseError(err) {
-		t.Error("IsParseError should return false for regular error")
 	}
 	if errors.IsUpgradeError(err) {
 		t.Error("IsUpgradeError should return false for regular error")
