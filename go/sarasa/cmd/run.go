@@ -11,6 +11,7 @@ import (
 
 	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/manager"
+	"github.com/indrasvat/sarasa/internal/signal"
 	runTUI "github.com/indrasvat/sarasa/internal/tui/run"
 	"github.com/indrasvat/sarasa/internal/ui"
 )
@@ -139,7 +140,8 @@ func runRunTUI(managers []manager.Manager, opts *manager.Options, cfg runTUI.Man
 
 //nolint:gocyclo // plain-text renderer with many formatting conditionals
 func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.ManagerConfigProvider, styled bool) error {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background())
+	defer cancel()
 	log := logger.Get()
 
 	// Color helper
@@ -197,6 +199,12 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 	overallStart := time.Now()
 
 	for _, m := range managers {
+		// Check for cancellation
+		if ctx.Err() != nil {
+			fmt.Printf("\n  %s %s\n\n", c(yellow, ui.IconWarning), c(yellow, "Interrupted"))
+			break
+		}
+
 		// Set skip list for this manager
 		opts.SkipList = cfg.GetSkipList(m.Name())
 
