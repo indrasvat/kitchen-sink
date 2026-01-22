@@ -66,7 +66,7 @@ package wrangler@4.59.1 / wrangler / node@24.13.0 npm@built-in (default)`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseVoltaList(tt.input)
+			result, _ := parseVoltaList(tt.input)
 
 			if len(result) != len(tt.expected) {
 				t.Errorf("expected %d packages, got %d", len(tt.expected), len(result))
@@ -82,5 +82,25 @@ package wrangler@4.59.1 / wrangler / node@24.13.0 npm@built-in (default)`,
 				}
 			}
 		})
+	}
+}
+
+func TestParseVoltaList_UnparsedLines(t *testing.T) {
+	// Test that unparsed lines are captured
+	input := `runtime node@24.13.0 (default)
+package wrangler@4.59.1 / wrangler / node@24.13.0 npm@built-in (default)
+package malformed-line (default)
+package another@1.0.0 / another / node@24.13.0 npm@built-in (default)`
+
+	result, unparsed := parseVoltaList(input)
+
+	if len(result) != 2 {
+		t.Errorf("expected 2 parsed packages, got %d", len(result))
+	}
+	if len(unparsed) != 1 {
+		t.Errorf("expected 1 unparsed line, got %d", len(unparsed))
+	}
+	if len(unparsed) > 0 && unparsed[0] != "package malformed-line (default)" {
+		t.Errorf("unexpected unparsed line: %s", unparsed[0])
 	}
 }

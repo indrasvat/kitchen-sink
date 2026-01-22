@@ -2,12 +2,12 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
 )
 
@@ -43,16 +43,16 @@ type brewOutdatedJSON struct {
 }
 
 type brewFormula struct {
-	Name              string   `json:"name"`
-	InstalledVersions []string `json:"installed_versions"`
-	CurrentVersion    string   `json:"current_version"`
-	PinnedVersion     string   `json:"pinned_version"`
+	Name              string                 `json:"name"`
+	InstalledVersions jsonutil.StringOrSlice `json:"installed_versions"`
+	CurrentVersion    string                 `json:"current_version"`
+	PinnedVersion     string                 `json:"pinned_version"`
 }
 
 type brewCask struct {
-	Name              string   `json:"name"`
-	InstalledVersions []string `json:"installed_versions"`
-	CurrentVersion    string   `json:"current_version"`
+	Name              string                 `json:"name"`
+	InstalledVersions jsonutil.StringOrSlice `json:"installed_versions"`
+	CurrentVersion    string                 `json:"current_version"`
 }
 
 func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
@@ -82,8 +82,8 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 	}
 
 	var outdated brewOutdatedJSON
-	if err := json.Unmarshal(output, &outdated); err != nil {
-		return nil, fmt.Errorf("failed to parse brew outdated output: %w", err)
+	if err := jsonutil.Parse("brew", "outdated", output, &outdated); err != nil {
+		return nil, err
 	}
 
 	var packages []Package
@@ -93,13 +93,9 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		if b.opts.ShouldSkip(f.Name) {
 			continue
 		}
-		current := ""
-		if len(f.InstalledVersions) > 0 {
-			current = f.InstalledVersions[0]
-		}
 		packages = append(packages, Package{
 			Name:    f.Name,
-			Current: current,
+			Current: f.InstalledVersions.First(),
 			Latest:  f.CurrentVersion,
 		})
 	}
@@ -109,13 +105,9 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		if b.opts.ShouldSkip(c.Name) {
 			continue
 		}
-		current := ""
-		if len(c.InstalledVersions) > 0 {
-			current = c.InstalledVersions[0]
-		}
 		packages = append(packages, Package{
 			Name:    c.Name,
-			Current: current,
+			Current: c.InstalledVersions.First(),
 			Latest:  c.CurrentVersion,
 		})
 	}
@@ -217,11 +209,11 @@ func (b *Brew) getInstalledVersion(ctx context.Context, name string) (string, er
 			} `json:"installed"`
 		} `json:"formulae"`
 		Casks []struct {
-			Installed string `json:"installed"`
+			Installed jsonutil.StringOrSlice `json:"installed"`
 		} `json:"casks"`
 	}
 
-	if err := json.Unmarshal(output, &result); err != nil {
+	if err := jsonutil.Parse("brew", "info", output, &result); err != nil {
 		return "", err
 	}
 
@@ -232,7 +224,7 @@ func (b *Brew) getInstalledVersion(ctx context.Context, name string) (string, er
 
 	// Check casks
 	if len(result.Casks) > 0 {
-		return result.Casks[0].Installed, nil
+		return result.Casks[0].Installed.First(), nil
 	}
 
 	return "", nil

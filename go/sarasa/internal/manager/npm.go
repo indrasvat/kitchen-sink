@@ -2,13 +2,13 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
 )
 
@@ -71,8 +71,8 @@ func (n *NPM) CheckOutdated(ctx context.Context) ([]Package, error) {
 	}
 
 	var outdated map[string]npmOutdatedPackage
-	if err := json.Unmarshal(output, &outdated); err != nil {
-		return nil, fmt.Errorf("failed to parse npm outdated output: %w", err)
+	if err := jsonutil.Parse("npm", "outdated", output, &outdated); err != nil {
+		return nil, err
 	}
 
 	var packages []Package
@@ -202,7 +202,7 @@ func (n *NPM) getPackageVersion(ctx context.Context, name string) (string, error
 		} `json:"dependencies"`
 	}
 
-	if err := json.Unmarshal(output, &result); err != nil {
+	if err := jsonutil.Parse("npm", "list", output, &result); err != nil {
 		return "", err
 	}
 

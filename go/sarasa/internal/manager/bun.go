@@ -117,10 +117,15 @@ func (b *Bun) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error) 
 
 		start := time.Now()
 		cmd := exec.CommandContext(ctx, "bun", "install", "-g", pkg.Name)
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			log.Error("bun install failed",
+				"package", pkg.Name,
+				"error", err.Error(),
+				"output", string(output),
+			)
 			logger.LogUpgradeError(b.Name(), pkg.Name, err, duration)
 			result.Failed = append(result.Failed, pkg)
 		} else {

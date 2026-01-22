@@ -45,8 +45,10 @@ type voltaPackage struct {
 var packageRegex = regexp.MustCompile(`^package\s+(@?[^@]+)@([^\s/]+)`)
 
 // parseVoltaList parses the output of `volta list --format plain`.
-func parseVoltaList(output string) []voltaPackage {
+// Returns packages and any lines that couldn't be parsed (for debugging).
+func parseVoltaList(output string) ([]voltaPackage, []string) {
 	var packages []voltaPackage
+	var unparsedLines []string
 	scanner := bufio.NewScanner(strings.NewReader(output))
 
 	for scanner.Scan() {
@@ -66,10 +68,13 @@ func parseVoltaList(output string) []voltaPackage {
 				name:    matches[1],
 				version: matches[2],
 			})
+		} else {
+			// Track lines that look like packages but couldn't be parsed
+			unparsedLines = append(unparsedLines, line)
 		}
 	}
 
-	return packages
+	return packages, unparsedLines
 }
 
 // getLatestVersion queries npm registry for the latest version of a package.
@@ -83,6 +88,8 @@ func (v *Volta) getLatestVersion(ctx context.Context, name string) (string, erro
 }
 
 func (v *Volta) CheckOutdated(ctx context.Context) ([]Package, error) {
+	log := logger.WithManager(v.Name())
+
 	// Get list of installed Volta packages
 	cmd := exec.CommandContext(ctx, "volta", "list", "--format", "plain")
 	output, err := cmd.Output()
@@ -90,7 +97,17 @@ func (v *Volta) CheckOutdated(ctx context.Context) ([]Package, error) {
 		return nil, fmt.Errorf("volta list failed: %w", err)
 	}
 
-	installed := parseVoltaList(string(output))
+	installed, unparsed := parseVoltaList(string(output))
+
+	// Log any lines that couldn't be parsed (format may have changed)
+	if len(unparsed) > 0 {
+		log.Warn("Some volta list lines could not be parsed - format may have changed",
+			"unparsed_count", len(unparsed),
+			"unparsed_lines", unparsed,
+			"raw_output", string(output),
+		)
+	}
+
 	if len(installed) == 0 {
 		return nil, nil
 	}
@@ -225,7 +242,7 @@ func (v *Volta) getInstalledVersion(ctx context.Context, name string) (string, e
 		return "", err
 	}
 
-	packages := parseVoltaList(string(output))
+	packages, _ := parseVoltaList(string(output))
 	for _, pkg := range packages {
 		if pkg.name == name {
 			return pkg.version, nil
