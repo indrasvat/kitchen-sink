@@ -23,9 +23,10 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "sarasa",
 	Short: "Automated global package manager upgrades",
-	Long: `Sarasa automates global package upgrades for brew, npm, bun, and pipx
+	Long: `Sarasa automates global package upgrades for brew, volta/npm, bun, and pipx
 with scheduled background execution via launchd.
 
+Uses volta when detected, otherwise falls back to npm.
 All operations target globally-installed packages only.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		// Load config
@@ -128,6 +129,7 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 			color lipgloss.AdaptiveColor
 		}{
 			{ui.IconBrew, "brew", ui.ColorBrew},
+			{ui.IconVolta, "volta", ui.ColorVolta},
 			{ui.IconNPM, "npm", ui.ColorNPM},
 			{ui.IconPipx, "pipx", ui.ColorPipx},
 			{ui.IconBun, "bun", ui.ColorBun},
@@ -141,8 +143,11 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 			}
 		}
 		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("  (uses volta when detected, otherwise npm)"))
+		b.WriteString("\n")
 	} else {
-		b.WriteString("  brew · npm · pipx · bun\n")
+		b.WriteString("  brew · volta · npm · pipx · bun\n")
+		b.WriteString("  (uses volta when detected, otherwise npm)\n")
 	}
 	b.WriteString("\n")
 
