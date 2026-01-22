@@ -43,6 +43,10 @@ func (n *NPM) IsAvailable() bool {
 	return true
 }
 
+func (n *NPM) SetSkipList(packages []string) {
+	n.opts.SkipList = packages
+}
+
 // npmOutdatedPackage represents a package in npm outdated JSON output.
 type npmOutdatedPackage struct {
 	Current  string `json:"current"`

@@ -33,6 +33,10 @@ func (b *Bun) IsAvailable() bool {
 	return err == nil
 }
 
+func (b *Bun) SetSkipList(packages []string) {
+	b.opts.SkipList = packages
+}
+
 func (b *Bun) CheckOutdated(ctx context.Context) ([]Package, error) {
 	// bun doesn't have a native outdated command for global packages
 	// We list global packages and then check each one

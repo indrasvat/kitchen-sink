@@ -35,6 +35,10 @@ func (v *Volta) IsAvailable() bool {
 	return err == nil
 }
 
+func (v *Volta) SetSkipList(packages []string) {
+	v.opts.SkipList = packages
+}
+
 // voltaPackage represents a parsed Volta package entry.
 type voltaPackage struct {
 	name    string

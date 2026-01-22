@@ -45,6 +45,9 @@ type Manager interface {
 
 	// Cleanup runs cleanup operations (if supported).
 	Cleanup(ctx context.Context) error
+
+	// SetSkipList sets the list of packages to skip.
+	SetSkipList(packages []string)
 }
 
 // Options holds options passed to managers.

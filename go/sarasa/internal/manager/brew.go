@@ -36,6 +36,10 @@ func (b *Brew) IsAvailable() bool {
 	return err == nil
 }
 
+func (b *Brew) SetSkipList(packages []string) {
+	b.opts.SkipList = packages
+}
+
 // brewOutdatedJSON represents the JSON output of `brew outdated --json=v2`.
 type brewOutdatedJSON struct {
 	Formulae []brewFormula `json:"formulae"`
