@@ -50,9 +50,9 @@ type brewFormula struct {
 }
 
 type brewCask struct {
-	Name              string `json:"name"`
-	InstalledVersions string `json:"installed_versions"`
-	CurrentVersion    string `json:"current_version"`
+	Name              string   `json:"name"`
+	InstalledVersions []string `json:"installed_versions"`
+	CurrentVersion    string   `json:"current_version"`
 }
 
 func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
@@ -109,9 +109,13 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		if b.opts.ShouldSkip(c.Name) {
 			continue
 		}
+		current := ""
+		if len(c.InstalledVersions) > 0 {
+			current = c.InstalledVersions[0]
+		}
 		packages = append(packages, Package{
 			Name:    c.Name,
-			Current: c.InstalledVersions,
+			Current: current,
 			Latest:  c.CurrentVersion,
 		})
 	}
