@@ -15,10 +15,11 @@ var (
 	ColorMuted     = lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"}
 
 	// Manager-specific accent colors
-	ColorBrew = lipgloss.AdaptiveColor{Light: "#B5651D", Dark: "#FFA500"} // Orange
-	ColorNPM  = lipgloss.AdaptiveColor{Light: "#CC0000", Dark: "#CB3837"} // Red
-	ColorPipx = lipgloss.AdaptiveColor{Light: "#3776AB", Dark: "#4B8BBE"} // Blue
-	ColorBun  = lipgloss.AdaptiveColor{Light: "#D2B48C", Dark: "#FBDF9D"} // Tan
+	ColorBrew  = lipgloss.AdaptiveColor{Light: "#B5651D", Dark: "#FFA500"} // Orange
+	ColorNPM   = lipgloss.AdaptiveColor{Light: "#CC0000", Dark: "#CB3837"} // Red
+	ColorVolta = lipgloss.AdaptiveColor{Light: "#7B68EE", Dark: "#9370DB"} // Purple
+	ColorPipx  = lipgloss.AdaptiveColor{Light: "#3776AB", Dark: "#4B8BBE"} // Blue
+	ColorBun   = lipgloss.AdaptiveColor{Light: "#D2B48C", Dark: "#FBDF9D"} // Tan
 )
 
 // ManagerColor returns the accent color for a given manager name.
@@ -28,6 +29,8 @@ func ManagerColor(name string) lipgloss.AdaptiveColor {
 		return ColorBrew
 	case "npm":
 		return ColorNPM
+	case "volta":
+		return ColorVolta
 	case "pipx":
 		return ColorPipx
 	case "bun":

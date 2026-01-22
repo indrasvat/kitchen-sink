@@ -133,7 +133,7 @@ uv run python/games/space-war.py
 
 [`sarasa`](go/sarasa/) is a CLI tool for automated global package manager upgrades with scheduled background execution via launchd.
 
-**Supported managers:** 🍺 brew · 📦 npm · 🐍 pipx · 🥟 bun
+**Supported managers:** 🍺 brew · ⚡ volta · 📦 npm · 🐍 pipx · 🥟 bun (uses volta when detected, otherwise npm)
 
 | Command | Description |
 |---------|-------------|
@@ -172,7 +172,7 @@ sarasa schedule install
 **Configuration:** `~/.config/sarasa/config.toml`
 
 ```toml
-managers = ["brew", "npm", "pipx", "bun"]
+managers = ["brew", "volta", "npm", "pipx", "bun"]
 
 [skip]
 brew = ["postgresql@14"]  # Packages to skip

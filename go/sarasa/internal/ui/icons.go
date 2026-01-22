@@ -17,6 +17,7 @@ const (
 const (
 	IconBrew    = "🍺"
 	IconNPM     = "📦"
+	IconVolta   = "⚡"
 	IconPipx    = "🐍"
 	IconBun     = "🥟"
 	IconPackage = "📦"
@@ -29,6 +30,8 @@ func ManagerIcon(name string) string {
 		return IconBrew
 	case "npm":
 		return IconNPM
+	case "volta":
+		return IconVolta
 	case "pipx":
 		return IconPipx
 	case "bun":
