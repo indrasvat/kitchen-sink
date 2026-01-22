@@ -125,7 +125,10 @@ func (v *Volta) CheckOutdated(ctx context.Context) ([]Package, error) {
 		// Query npm for latest version
 		latest, err := v.getLatestVersion(ctx, pkg.name)
 		if err != nil {
-			// Log but continue - package might not be on npm
+			log.Warn("Failed to check latest version - skipping package",
+				"package", pkg.name,
+				"error", err.Error(),
+			)
 			continue
 		}
 

@@ -75,7 +75,7 @@ func Do(ctx context.Context, cfg Config, fn func() error) *Result {
 			break
 		}
 
-		// Calculate backoff with jitter
+		// Calculate exponential backoff
 		wait := cfg.InitialWait * time.Duration(math.Pow(cfg.Multiplier, float64(attempt-1)))
 		if wait > cfg.MaxWait {
 			wait = cfg.MaxWait
