@@ -69,9 +69,12 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		managerNames = manager.List()
 	}
 
+	// Wrap config for skip list access
+	cfgWrapper := &configWrapper{cfg: cfg}
+
 	// JSON output - no TUI
 	if statusJSON {
-		return runStatusJSON(managerNames, opts)
+		return runStatusJSON(managerNames, opts, cfgWrapper)
 	}
 
 	// Detect output mode
@@ -79,23 +82,23 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	switch mode {
 	case ui.ModeTUI:
-		return runStatusTUI(managerNames, opts)
+		return runStatusTUI(managerNames, opts, cfgWrapper)
 	case ui.ModeStyled, ui.ModePlain:
-		return runStatusPlain(managerNames, opts, mode == ui.ModeStyled)
+		return runStatusPlain(managerNames, opts, cfgWrapper, mode == ui.ModeStyled)
 	}
 
 	return nil
 }
 
-func runStatusTUI(managerNames []string, opts *manager.Options) error {
-	model := statusTUI.New(managerNames, opts)
+func runStatusTUI(managerNames []string, opts *manager.Options, cfg *configWrapper) error {
+	model := statusTUI.New(managerNames, opts, cfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	_, err := p.Run()
 	return err
 }
 
-func runStatusJSON(managerNames []string, opts *manager.Options) error {
+func runStatusJSON(managerNames []string, opts *manager.Options, cfg *configWrapper) error {
 	ctx := context.Background()
 	output := StatusOutput{
 		Managers: make([]ManagerStatus, 0, len(managerNames)),
@@ -117,6 +120,7 @@ func runStatusJSON(managerNames []string, opts *manager.Options) error {
 		}
 
 		if m.IsAvailable() {
+			m.SetSkipList(cfg.GetSkipList(name))
 			outdated, err := m.CheckOutdated(ctx)
 			if err != nil {
 				status.Error = err.Error()
@@ -136,7 +140,7 @@ func runStatusJSON(managerNames []string, opts *manager.Options) error {
 	return nil
 }
 
-func runStatusPlain(managerNames []string, opts *manager.Options, styled bool) error {
+func runStatusPlain(managerNames []string, opts *manager.Options, cfg *configWrapper, styled bool) error {
 	ctx := context.Background()
 
 	// Color helper
@@ -209,6 +213,7 @@ func runStatusPlain(managerNames []string, opts *manager.Options, styled bool) e
 			continue
 		}
 
+		m.SetSkipList(cfg.GetSkipList(name))
 		outdated, err := m.CheckOutdated(ctx)
 		if err != nil {
 			fmt.Printf("    %s %s\n\n", c(red, ui.IconCross), c(red, err.Error()))

@@ -22,10 +22,16 @@ type ManagerStatus struct {
 	Loading   bool
 }
 
+// ManagerConfigProvider provides per-manager config.
+type ManagerConfigProvider interface {
+	GetSkipList(manager string) []string
+}
+
 // Model is the bubbletea model for the status command.
 type Model struct {
 	managers  []string
 	opts      *manager.Options
+	cfg       ManagerConfigProvider
 	statuses  map[string]*ManagerStatus
 	loadOrder []string
 	spinner   spinner.Model
@@ -39,7 +45,7 @@ type Model struct {
 type allLoadedMsg struct{}
 
 // New creates a new status TUI model.
-func New(managerNames []string, opts *manager.Options) Model {
+func New(managerNames []string, opts *manager.Options, cfg ManagerConfigProvider) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = ui.StyleSpinner
@@ -55,6 +61,7 @@ func New(managerNames []string, opts *manager.Options) Model {
 	return Model{
 		managers:  managerNames,
 		opts:      opts,
+		cfg:       cfg,
 		statuses:  statuses,
 		loadOrder: managerNames,
 		spinner:   s,
@@ -85,6 +92,9 @@ func (m Model) loadAllManagers() tea.Cmd {
 			} else {
 				status.Available = mgr.IsAvailable()
 				if status.Available {
+					if m.cfg != nil {
+						mgr.SetSkipList(m.cfg.GetSkipList(name))
+					}
 					outdated, err := mgr.CheckOutdated(ctx)
 					if err != nil {
 						status.Error = err

@@ -209,6 +209,51 @@ skip_major = true
 	}
 }
 
+func TestLoadFrom_VoltaSkipList(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+[skip]
+volta = ["agent-browser", "@google/gemini-cli"]
+`
+
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	skipList := cfg.GetSkipList("volta")
+	if len(skipList) != 2 {
+		t.Fatalf("expected 2 volta skip items, got %d", len(skipList))
+	}
+	if skipList[0] != "agent-browser" {
+		t.Errorf("expected first skip item to be agent-browser, got %s", skipList[0])
+	}
+	if skipList[1] != "@google/gemini-cli" {
+		t.Errorf("expected second skip item to be @google/gemini-cli, got %s", skipList[1])
+	}
+
+	// Verify ShouldSkip works end-to-end from loaded config
+	if !cfg.ShouldSkip("volta", "agent-browser") {
+		t.Error("expected agent-browser to be skipped for volta")
+	}
+	if !cfg.ShouldSkip("volta", "@google/gemini-cli") {
+		t.Error("expected @google/gemini-cli to be skipped for volta")
+	}
+	if cfg.ShouldSkip("volta", "wrangler") {
+		t.Error("expected wrangler to not be skipped for volta")
+	}
+	// Skip list is per-manager
+	if cfg.ShouldSkip("npm", "agent-browser") {
+		t.Error("expected agent-browser to not be skipped for npm")
+	}
+}
+
 func TestSaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "sarasa", "config.toml")
