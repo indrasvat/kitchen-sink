@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/manager"
 	"github.com/indrasvat/sarasa/internal/ui"
 )
@@ -27,22 +29,60 @@ type ManagerConfigProvider interface {
 	GetSkipList(manager string) []string
 }
 
-// Model is the bubbletea model for the status command.
-type Model struct {
-	managers  []string
-	opts      *manager.Options
-	cfg       ManagerConfigProvider
-	statuses  map[string]*ManagerStatus
-	loadOrder []string
-	spinner   spinner.Model
-	loading   bool
-	done      bool
-	width     int
-	height    int
+type upgradeState int
+
+const (
+	stateLoading upgradeState = iota
+	stateViewing
+	stateUpgrading
+	stateUpgraded
+)
+
+type upgradeResult struct {
+	Name     string
+	Packages []*packageResult
+	Status   string // "pending", "upgrading", "done", "error"
+	Error    error
+	Duration time.Duration
+	Start    time.Time
 }
 
-// allLoadedMsg is sent when all managers are loaded.
+type packageResult struct {
+	Package manager.Package
+	Status  string // "success", "failed", "skipped"
+}
+
+// Model is the bubbletea model for the status command.
+type Model struct {
+	managers       []string
+	opts           *manager.Options
+	cfg            ManagerConfigProvider
+	statuses       map[string]*ManagerStatus
+	loadOrder      []string
+	spinner        spinner.Model
+	state          upgradeState
+	upgradeResults map[string]*upgradeResult
+	upgradeOrder   []string
+	activeCount    int
+	startTime      time.Time
+	totalUpgraded  int
+	totalFailed    int
+	totalSkipped   int
+	width          int
+	height         int
+}
+
+// Messages
 type allLoadedMsg struct{}
+
+type upgradeStartMsg struct{ name string }
+
+type upgradeManagerDoneMsg struct {
+	name     string
+	result   *manager.UpgradeResult
+	duration time.Duration
+	err      error
+}
 
 // New creates a new status TUI model.
 func New(managerNames []string, opts *manager.Options, cfg ManagerConfigProvider) Model {
@@ -65,7 +105,7 @@ func New(managerNames []string, opts *manager.Options, cfg ManagerConfigProvider
 		statuses:  statuses,
 		loadOrder: managerNames,
 		spinner:   s,
-		loading:   true,
+		state:     stateLoading,
 	}
 }
 
@@ -105,11 +145,58 @@ func (m Model) loadAllManagers() tea.Cmd {
 				status.Loading = false
 			}
 
-			// We'll collect all and return at end
 			m.statuses[name] = status
 		}
 
 		return allLoadedMsg{}
+	}
+}
+
+func (m Model) hasOutdated() bool {
+	for _, status := range m.statuses {
+		if status.Available && status.Error == nil && len(status.Outdated) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) runManagerUpgrade(name string) tea.Cmd {
+	opts := m.opts
+	cfgProvider := m.cfg
+
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		mgr, err := manager.Get(name, opts)
+		if err != nil {
+			return upgradeManagerDoneMsg{name: name, err: err}
+		}
+
+		if cfgProvider != nil {
+			mgr.SetSkipList(cfgProvider.GetSkipList(name))
+		}
+
+		logger.LogStart(name)
+		start := time.Now()
+		result, err := mgr.Upgrade(ctx, false)
+		duration := time.Since(start)
+
+		if err == nil {
+			if cleanupErr := mgr.Cleanup(ctx); cleanupErr != nil {
+				logger.WithManager(name).Warn("Cleanup failed",
+					"error", cleanupErr.Error(),
+					"action", "cleanup",
+				)
+			}
+		}
+
+		return upgradeManagerDoneMsg{
+			name:     name,
+			result:   result,
+			duration: duration,
+			err:      err,
+		}
 	}
 }
 
@@ -121,14 +208,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "r":
-			if !m.loading {
+			if m.state == stateViewing || m.state == stateUpgraded {
 				// Reset and reload
 				for _, name := range m.managers {
-					m.statuses[name].Loading = true
+					m.statuses[name] = &ManagerStatus{
+						Name:    name,
+						Loading: true,
+					}
 				}
-				m.loading = true
-				m.done = false
+				m.state = stateLoading
+				m.upgradeResults = nil
+				m.upgradeOrder = nil
+				m.activeCount = 0
+				m.totalUpgraded = 0
+				m.totalFailed = 0
+				m.totalSkipped = 0
 				return m, tea.Batch(m.spinner.Tick, m.loadAllManagers())
+			}
+		case "u":
+			if m.state == stateViewing && m.hasOutdated() {
+				m.state = stateUpgrading
+				m.startTime = time.Now()
+				m.upgradeResults = make(map[string]*upgradeResult)
+				m.upgradeOrder = nil
+				m.activeCount = 0
+				m.totalUpgraded = 0
+				m.totalFailed = 0
+				m.totalSkipped = 0
+
+				var cmds []tea.Cmd
+				for _, name := range m.loadOrder {
+					status := m.statuses[name]
+					if !status.Available || status.Error != nil || len(status.Outdated) == 0 {
+						continue
+					}
+					m.upgradeOrder = append(m.upgradeOrder, name)
+					m.upgradeResults[name] = &upgradeResult{
+						Name:   name,
+						Status: "pending",
+					}
+					m.activeCount++
+					n := name // capture
+					cmds = append(cmds, func() tea.Msg {
+						return upgradeStartMsg{name: n}
+					})
+				}
+
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -143,8 +269,76 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case allLoadedMsg:
-		m.loading = false
-		m.done = true
+		m.state = stateViewing
+		return m, nil
+
+	case upgradeStartMsg:
+		if r, ok := m.upgradeResults[msg.name]; ok {
+			r.Status = "upgrading"
+			r.Start = time.Now()
+		}
+		return m, m.runManagerUpgrade(msg.name)
+
+	case upgradeManagerDoneMsg:
+		m.activeCount--
+
+		r, ok := m.upgradeResults[msg.name]
+		if !ok {
+			break
+		}
+
+		r.Duration = msg.duration
+
+		if msg.err != nil {
+			r.Status = "error"
+			r.Error = msg.err
+		} else {
+			r.Status = "done"
+			for _, pkg := range msg.result.Upgraded {
+				r.Packages = append(r.Packages, &packageResult{
+					Package: pkg,
+					Status:  "success",
+				})
+				m.totalUpgraded++
+			}
+			for _, pkg := range msg.result.Failed {
+				r.Packages = append(r.Packages, &packageResult{
+					Package: pkg,
+					Status:  "failed",
+				})
+				m.totalFailed++
+			}
+			for _, pkg := range msg.result.Skipped {
+				r.Packages = append(r.Packages, &packageResult{
+					Package: pkg,
+					Status:  "skipped",
+				})
+				m.totalSkipped++
+			}
+		}
+
+		upgraded := 0
+		failed := 0
+		for _, p := range r.Packages {
+			switch p.Status {
+			case "success":
+				upgraded++
+			case "failed":
+				failed++
+			}
+		}
+		logger.LogComplete(msg.name, upgraded, failed, msg.duration.Milliseconds())
+
+		if m.activeCount == 0 {
+			m.state = stateUpgraded
+			totalDuration := time.Since(m.startTime)
+			logger.Get().Info("Status upgrade completed",
+				"total_upgraded", m.totalUpgraded,
+				"total_failed", m.totalFailed,
+				"duration_ms", totalDuration.Milliseconds(),
+			)
+		}
+
 		return m, nil
 	}
 
@@ -159,9 +353,12 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	headerIcon := ui.StyleSummaryIcon.Render(ui.IconDiamond)
 	headerText := ui.StyleHeader.Render("SARASA STATUS")
-	if m.loading {
+	switch m.state {
+	case stateLoading:
 		b.WriteString(fmt.Sprintf("  %s %s %s\n", headerIcon, headerText, m.spinner.View()))
-	} else {
+	case stateUpgrading:
+		b.WriteString(fmt.Sprintf("  %s %s  %s Upgrading...\n", headerIcon, headerText, m.spinner.View()))
+	case stateViewing, stateUpgraded:
 		b.WriteString(fmt.Sprintf("  %s %s\n", headerIcon, headerText))
 	}
 	b.WriteString("\n")
@@ -179,6 +376,16 @@ func (m Model) View() string {
 
 	for _, name := range m.loadOrder {
 		status := m.statuses[name]
+
+		// If upgrading/upgraded and this manager has an upgrade result, show upgrade panel
+		if (m.state == stateUpgrading || m.state == stateUpgraded) && m.upgradeResults != nil {
+			if ur, ok := m.upgradeResults[name]; ok {
+				b.WriteString(m.renderUpgradePanel(name, ur, panelWidth))
+				// Don't count stats for upgrade panels
+				continue
+			}
+		}
+
 		b.WriteString(m.renderManagerPanel(name, status, panelWidth))
 
 		if status.Loading {
@@ -196,16 +403,30 @@ func (m Model) View() string {
 		}
 	}
 
-	// Summary (only show when done)
-	if m.done {
+	// Summary
+	switch m.state {
+	case stateViewing:
 		b.WriteString(m.renderSummary(totalOutdated, totalUpToDate, totalUnavailable, totalErrors))
+	case stateUpgraded:
+		b.WriteString(m.renderUpgradeSummary())
+	case stateLoading, stateUpgrading:
+		// No summary while loading or upgrading
 	}
 
-	// Help
+	// Help bar
 	helpStyle := ui.StyleHelp
-	if m.loading {
+	switch m.state {
+	case stateLoading:
 		b.WriteString(helpStyle.Render("  q quit"))
-	} else {
+	case stateViewing:
+		if m.hasOutdated() {
+			b.WriteString(helpStyle.Render("  u upgrade  ·  r refresh  ·  q quit"))
+		} else {
+			b.WriteString(helpStyle.Render("  r refresh  ·  q quit"))
+		}
+	case stateUpgrading:
+		b.WriteString(helpStyle.Render("  q quit"))
+	case stateUpgraded:
 		b.WriteString(helpStyle.Render("  r refresh  ·  q quit"))
 	}
 	b.WriteString("\n")
@@ -266,6 +487,73 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 	return b.String()
 }
 
+func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int) string {
+	var b strings.Builder
+
+	// Manager header with icon OUTSIDE the panel (with proper margin)
+	icon := ui.ManagerIcon(name)
+	titleStyle := ui.GetManagerTitleStyle(name)
+	title := titleStyle.Render(strings.ToUpper(name))
+	headerStyle := lipgloss.NewStyle().MarginLeft(2)
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", icon, title)) + "\n")
+
+	var content strings.Builder
+
+	switch result.Status {
+	case "pending":
+		content.WriteString(ui.StyleMuted.Render("waiting..."))
+	case "upgrading":
+		elapsed := time.Since(result.Start)
+		content.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), ui.StyleDuration.Render(formatDuration(elapsed))))
+	case "error":
+		content.WriteString(ui.StyleError.Render(ui.IconCross + " " + result.Error.Error()))
+	case "done":
+		if len(result.Packages) == 0 {
+			content.WriteString(ui.StyleSuccess.Render(ui.IconCheck + " Already up to date"))
+		} else {
+			durationStr := ui.StyleDuration.Render(fmt.Sprintf("(%s)", formatDuration(result.Duration)))
+			content.WriteString(fmt.Sprintf("%s\n", durationStr))
+
+			for i, pkg := range result.Packages {
+				var statusIcon string
+				var versionStyle lipgloss.Style
+
+				switch pkg.Status {
+				case "success":
+					statusIcon = ui.StyleSuccess.Render(ui.IconCheck)
+					versionStyle = ui.StyleVersionLatest
+				case "failed":
+					statusIcon = ui.StyleError.Render(ui.IconCross)
+					versionStyle = ui.StyleError
+				case "skipped":
+					mgrColor := ui.ManagerColor(name)
+					statusIcon = lipgloss.NewStyle().Foreground(mgrColor).Render(ui.IconTriangle)
+					versionStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#8B008B", Dark: "#DA70D6"})
+				}
+
+				pkgName := ui.StylePackageName.Render(pkg.Package.Name)
+				current := ui.StyleVersionCurrent.Render(pkg.Package.Current)
+				arrow := ui.StyleArrow.Render(ui.IconArrow)
+				latest := versionStyle.Render(pkg.Package.Latest)
+
+				majorTag := ""
+				if pkg.Package.IsMajor && pkg.Status == "skipped" {
+					majorTag = " " + ui.StyleVersionMajor.Render("[MAJOR]")
+				}
+
+				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s", statusIcon, pkgName, current, arrow, latest, majorTag))
+				if i < len(result.Packages)-1 {
+					content.WriteString("\n")
+				}
+			}
+		}
+	}
+
+	panelStyle := ui.GetManagerPanelStyle(name).Width(width).MarginLeft(2)
+	b.WriteString(panelStyle.Render(content.String()) + "\n")
+	return b.String()
+}
+
 func (m Model) renderSummary(outdated, upToDate, unavailable, errors int) string {
 	var parts []string
 
@@ -290,10 +578,40 @@ func (m Model) renderSummary(outdated, upToDate, unavailable, errors int) string
 	}
 
 	if outdated > 0 {
-		cmdStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary)
-		b.WriteString(fmt.Sprintf("     Run %s to upgrade\n", cmdStyle.Render("sarasa run")))
+		keyStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary)
+		b.WriteString(fmt.Sprintf("     Press %s to upgrade\n", keyStyle.Render("u")))
 	}
 
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m Model) renderUpgradeSummary() string {
+	var b strings.Builder
+	var parts []string
+
+	totalDuration := time.Since(m.startTime)
+
+	if m.totalUpgraded > 0 {
+		parts = append(parts, ui.StyleSuccess.Render(fmt.Sprintf("%d upgraded", m.totalUpgraded)))
+	}
+	if m.totalFailed > 0 {
+		parts = append(parts, ui.StyleError.Render(fmt.Sprintf("%d failed", m.totalFailed)))
+	}
+	if m.totalUpgraded == 0 && m.totalFailed == 0 {
+		parts = append(parts, ui.StyleSuccess.Render("All up to date"))
+	}
+
+	parts = append(parts, ui.StyleDuration.Render(formatDuration(totalDuration)))
+
+	summaryIcon := ui.IconSparkle
+	if m.totalFailed > 0 {
+		summaryIcon = ui.IconFailed
+	}
+
+	separator := ui.StyleMuted.Render(" · ")
+	summaryLine := strings.Join(parts, separator)
+	b.WriteString(fmt.Sprintf("\n  %s  %s\n", summaryIcon, summaryLine))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -301,4 +619,16 @@ func (m Model) renderSummary(outdated, upToDate, unavailable, errors int) string
 // GetStatuses returns the manager statuses for JSON output.
 func (m Model) GetStatuses() map[string]*ManagerStatus {
 	return m.statuses
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm %ds", minutes, seconds)
 }

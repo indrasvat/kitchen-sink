@@ -165,7 +165,7 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		name string
 		desc string
 	}{
-		{"status", "Check for outdated packages"},
+		{"status", "Check for outdated packages (press u to upgrade)"},
 		{"run", "Run package upgrades"},
 		{"logs", "View upgrade logs"},
 		{"schedule", "Manage scheduled upgrades"},
@@ -205,7 +205,7 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		cmd  string
 		desc string
 	}{
-		{"sarasa status", "Show outdated packages"},
+		{"sarasa status", "Show outdated packages (press u to upgrade)"},
 		{"sarasa run --dry-run", "Preview upgrades without applying"},
 		{"sarasa run", "Upgrade all outdated packages"},
 		{"sarasa logs", "View upgrade history"},

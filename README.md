@@ -137,7 +137,7 @@ uv run python/games/space-war.py
 
 | Command | Description |
 |---------|-------------|
-| `sarasa status` | Check for outdated packages (interactive TUI) |
+| `sarasa status` | Check for outdated packages (press `u` to upgrade) |
 | `sarasa run` | Upgrade all outdated packages |
 | `sarasa run --dry-run` | Preview upgrades without applying |
 | `sarasa logs` | Interactive log viewer with search and filtering |
