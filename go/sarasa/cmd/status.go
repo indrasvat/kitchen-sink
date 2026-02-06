@@ -22,10 +22,12 @@ var (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check for outdated packages",
-	Long: `Check for outdated packages without upgrading them.
+	Long: `Check for outdated packages and optionally upgrade them.
+
+In interactive mode, press 'u' to upgrade outdated packages directly.
 
 Examples:
-  sarasa status                       # Check all managers
+  sarasa status                       # Check all managers (press u to upgrade)
   sarasa status --managers=brew       # Check specific manager
   sarasa status --json                # Output as JSON`,
 	RunE: runStatus,
@@ -55,7 +57,8 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	cfg := GetConfig()
 
 	opts := &manager.Options{
-		Greedy: cfg.Brew.Greedy,
+		SkipMajor: cfg.NPM.SkipMajor,
+		Greedy:    cfg.Brew.Greedy,
 	}
 
 	// Determine which managers to check
