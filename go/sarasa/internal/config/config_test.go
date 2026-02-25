@@ -22,8 +22,12 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	}
 
-	// Check default schedule times
-	expectedTimes := []string{"08:00", "14:00", "22:00"}
+	// Check default schedule times (every 2 hours)
+	expectedTimes := []string{
+		"00:00", "02:00", "04:00", "06:00",
+		"08:00", "10:00", "12:00", "14:00",
+		"16:00", "18:00", "20:00", "22:00",
+	}
 	if len(cfg.Schedule.Times) != len(expectedTimes) {
 		t.Errorf("expected %d schedule times, got %d", len(expectedTimes), len(cfg.Schedule.Times))
 	}

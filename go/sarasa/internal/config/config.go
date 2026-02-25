@@ -67,7 +67,11 @@ func DefaultConfig() *Config {
 			Bun:   []string{},
 		},
 		Schedule: ScheduleConfig{
-			Times: []string{"08:00", "14:00", "22:00"},
+			Times: []string{
+				"00:00", "02:00", "04:00", "06:00",
+				"08:00", "10:00", "12:00", "14:00",
+				"16:00", "18:00", "20:00", "22:00",
+			},
 		},
 		Logging: LoggingConfig{
 			Dir:           filepath.Join(homeDir, "Library", "Logs", "sarasa"),
