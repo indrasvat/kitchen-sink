@@ -7,8 +7,10 @@
 set -euo pipefail
 
 readonly VERSION="2.0.0"
-readonly TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-readonly HOSTNAME=$(hostname -s)
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+readonly TIMESTAMP
+HOSTNAME=$(hostname -s)
+readonly HOSTNAME
 readonly OUTPUT_FILE="${1:-$HOME/tool-inventory-$(date +%Y%m%d-%H%M%S).json}"
 
 # ── Colors ───────────────────────────────────────────────────────
@@ -18,6 +20,7 @@ readonly BOLD=$'\033[1m'
 readonly UL=$'\033[4m'
 
 readonly RED=$'\033[31m'
+# shellcheck disable=SC2034
 readonly GRN=$'\033[32m'
 readonly YEL=$'\033[33m'
 readonly CYN=$'\033[36m'
@@ -190,7 +193,7 @@ collect_brew() {
         local cask_ver="unknown"
         # Get the installed version from the Caskroom directory
         if [[ -d "$caskroom/$cask_name" ]]; then
-            cask_ver=$(ls -1 "$caskroom/$cask_name" 2>/dev/null | head -1)
+            cask_ver=$(find "$caskroom/$cask_name" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1 | xargs basename 2>/dev/null)
             [[ -z "$cask_ver" ]] && cask_ver="unknown"
         fi
         [[ $cask_count -gt 0 ]] && casks_json+=","
@@ -731,7 +734,7 @@ collect_ssh() {
     _phase "SSH"
     local ssh_dir="$HOME/.ssh"
     if [[ ! -d "$ssh_dir" ]]; then
-        _skip "~/.ssh not found"; _phase_end
+        _skip "$HOME/.ssh not found"; _phase_end
         echo '  "ssh": {}'; return
     fi
 
@@ -885,8 +888,8 @@ collect_fonts() {
             [[ $font_count -gt 0 ]] && fonts_json+=","
             fonts_json+=" \"$(json_escape "$font")\""
             inc font_count
-        done < <(find "$dir" -maxdepth 1 \( -name "*.ttf" -o -name "*.otf" -o -name "*.ttc" \) 2>/dev/null \
-                 | xargs -I{} basename {} | sort -u | sgrep -iE 'nerd|mono|code|fira|jetbrains|hack|iosevka|cascadia|source.?code|inconsolata|menlo|sf.?mono')
+        done < <(find "$dir" -maxdepth 1 \( -name "*.ttf" -o -name "*.otf" -o -name "*.ttc" \) -exec basename {} \; 2>/dev/null \
+                 | sort -u | sgrep -iE 'nerd|mono|code|fira|jetbrains|hack|iosevka|cascadia|source.?code|inconsolata|menlo|sf.?mono')
     done
     _done "$font_count developer fonts"
     _phase_end

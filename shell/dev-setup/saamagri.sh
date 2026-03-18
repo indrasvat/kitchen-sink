@@ -24,7 +24,8 @@ readonly SMGR_VERSION="1.0.0"
 
 # ── Paths & Defaults ─────────────────────────────────────────────
 readonly STATE_DIR="$HOME/.saamagri"
-readonly BACKUP_DIR="$STATE_DIR/backups/$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="$STATE_DIR/backups/$(date +%Y%m%d-%H%M%S)"
+readonly BACKUP_DIR
 readonly LOG_DIR="$STATE_DIR/logs"
 readonly COMPLETED_FILE="$STATE_DIR/completed_phases"
 
@@ -35,7 +36,7 @@ DRY_RUN="false"
 START_PHASE=1
 PROFILE="personal"
 LOG_FILE=""
-CURRENT_PHASE=0
+export CURRENT_PHASE=0
 TOTAL_PHASES=17
 
 # ── Colors (works on bash 3.2) ───────────────────────────────────
@@ -44,6 +45,7 @@ DIM=$'\033[2m'
 BOLD=$'\033[1m'
 UL=$'\033[4m'
 RED=$'\033[31m'
+# shellcheck disable=SC2034
 GRN=$'\033[32m'
 YEL=$'\033[33m'
 CYN=$'\033[36m'
@@ -517,6 +519,7 @@ phase_06_language_runtimes() {
         else
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y >> "$LOG_FILE" 2>&1
             # Source cargo env for current session
+            # shellcheck source=/dev/null
             [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
         fi
         if cmd_exists rustc; then
@@ -533,7 +536,7 @@ phase_06_language_runtimes() {
         local tc
         for tc in $(jq -r '.rust.toolchains[]' "$INVENTORY_FILE" 2>/dev/null); do
             # Remove " (default)" suffix
-            tc=$(echo "$tc" | sed 's/ (default)//')
+            tc="${tc% (default)}"
             if rustup toolchain list 2>/dev/null | grep -q "$tc"; then continue; fi
             _act "Installing toolchain: $tc"
             run_cmd rustup toolchain install "$tc" || true
@@ -577,7 +580,7 @@ phase_06_language_runtimes() {
             export BUN_INSTALL="$HOME/.bun"
             export PATH="$BUN_INSTALL/bin:$PATH"
         fi
-        cmd_exists bun && _done "Bun $(bun --version 2>/dev/null)" || _warn "Bun not installed"
+        if cmd_exists bun; then _done "Bun $(bun --version 2>/dev/null)"; else _warn "Bun not installed"; fi
     else
         _done "Bun already installed: $(bun --version 2>/dev/null)"
     fi
@@ -671,7 +674,7 @@ phase_08_shell_configs() {
         path=$(jq -r ".shell_configs.configs[$i].path" "$INVENTORY_FILE" 2>/dev/null)
         [ -z "$path" ] || [ "$path" = "null" ] && { i=$((i + 1)); continue; }
         # Expand $HOME in path
-        path=$(echo "$path" | sed "s|^$HOME|$HOME|")
+        # path is already absolute from inventory; no transformation needed
         write_config ".shell_configs.configs[$i].content" "$path"
         i=$((i + 1))
     done
@@ -734,7 +737,7 @@ phase_10_ssh_keys() {
 
     _warn "No SSH key found"
     # Always ask for SSH key generation, even in --yes mode (security-sensitive)
-    printf "  ${BOLD}${BWHT}Generate a new ed25519 SSH key?${RST} ${DIM}[y/N]${RST} " >&2
+    printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
     local reply
     read -r reply
     if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
