@@ -51,15 +51,28 @@ One-command development environment setup scripts.
 
 | Script | Description |
 |--------|-------------|
+| [`saamagri.sh`](shell/dev-setup/saamagri.sh) | Full macOS dev environment setup from a Yantragaṇanā inventory JSON |
 | [`gameboy-dev-setup-macos.sh`](shell/dev-setup/gameboy-dev-setup-macos.sh) | Complete Game Boy development environment (GBDK-2020, RGBDS, emulators) |
 | [`setup-modern-emacs/`](shell/dev-setup/setup-modern-emacs/) | Modern Emacs setup with Homebrew, LSP, tree-sitter |
 
-```bash
-# Set up Game Boy dev environment
-./gameboy-dev-setup-macos.sh
+#### सामग्री (Sāmagrī)
 
-# Set up Emacs with modern defaults
-./setup-modern-emacs/setup-modern-emacs.sh --yes
+Inventory-driven macOS dev environment setup. First capture your current machine with [`mac-inventory.sh`](https://github.com/indrasvat/shell-scripts), then replay it on a fresh Mac with Sāmagrī.
+
+**17 phases** in dependency order: Xcode CLT → Homebrew → bash → brew packages → language runtimes → tools → shell configs → git → SSH → tmux → VS Code → fonts → AI agents → Docker → LaunchAgents → macOS defaults.
+
+```bash
+# Interactive setup (prompts before each phase)
+./saamagri.sh --inventory ~/tool-inventory.json
+
+# Unattended setup for a work Mac
+./saamagri.sh --yes --profile work
+
+# Preview what would change
+./saamagri.sh --dry-run
+
+# Resume from a specific phase after a failure
+./saamagri.sh --phase 8
 ```
 
 ### Utilities
