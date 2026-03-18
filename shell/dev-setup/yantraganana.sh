@@ -849,11 +849,20 @@ EOF
 
 # ── VS Code extensions ───────────────────────────────────────────
 collect_vscode() {
-    _phase "VS Code"
-    if ! cmd_exists code; then
-        _skip "VS Code CLI not found"; _phase_end
+    _phase "Editor Extensions"
+
+    # Detect VS Code or Cursor
+    local editor_cmd="" editor_name=""
+    if cmd_exists code; then
+        editor_cmd="code"; editor_name="VS Code"
+    elif cmd_exists cursor; then
+        editor_cmd="cursor"; editor_name="Cursor"
+    else
+        _skip "No VS Code or Cursor CLI found"; _phase_end
         echo '  "vscode": { "installed": false }'; return
     fi
+
+    _info "$editor_name detected"
 
     local ext_json="" ext_count=0
     while IFS= read -r ext; do
@@ -861,13 +870,14 @@ collect_vscode() {
         [[ $ext_count -gt 0 ]] && ext_json+=","
         ext_json+=" \"$(json_escape "$ext")\""
         inc ext_count
-    done < <(code --list-extensions 2>/dev/null)
-    _done "$ext_count VS Code extensions"
+    done < <($editor_cmd --list-extensions 2>/dev/null)
+    _done "$ext_count $editor_name extensions"
     _phase_end
 
     cat <<EOF
   "vscode": {
     "installed": true,
+    "editor": "$(json_escape "$editor_name")",
     "extension_count": $ext_count,
     "extensions": [${ext_json} ]
   }

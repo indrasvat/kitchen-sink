@@ -348,14 +348,20 @@ phase_03_core_formulae() {
     _info "$installed already installed, $pending to install:$to_install"
     if ! confirm_phase 3 "Core Formulae"; then _phase_end; return 0; fi
 
+    local any_failed="false"
     for f in $to_install; do
         _act "Installing $f..."
         if run_cmd brew install "$f"; then
             _done "$f"
         else
             _err "Failed to install $f"
+            any_failed="true"
         fi
     done
+    if [ "$any_failed" = "true" ]; then
+        _err "Some core formulae failed — not marking phase complete"
+        _phase_end; return 1
+    fi
     mark_phase_complete 3
     _phase_end
 }
@@ -562,13 +568,24 @@ phase_06_language_runtimes() {
         _done "Volta already installed: $(volta --version 2>/dev/null)"
     fi
 
-    # Volta: install default node + npm
-    if cmd_exists volta && cmd_exists jq; then
-        local node_ver
-        node_ver=$(jq -r '[.node_ecosystem.volta_tools[] | select(.kind=="runtime" and .default==true)] | .[0].version' "$INVENTORY_FILE" 2>/dev/null)
-        if [ -n "$node_ver" ] && [ "$node_ver" != "null" ]; then
-            _act "Installing Node $node_ver via Volta..."
-            run_cmd volta install "node@$node_ver" || true
+    # Install default node + npm via the detected version manager
+    if cmd_exists jq; then
+        local version_manager node_ver
+        version_manager=$(jq -r '.node_ecosystem.version_manager' "$INVENTORY_FILE" 2>/dev/null)
+        node_ver=$(jq -r '.node_ecosystem.node_version' "$INVENTORY_FILE" 2>/dev/null | sed 's/^v//')
+
+        if [ "$version_manager" = "volta" ] && cmd_exists volta; then
+            local volta_node
+            volta_node=$(jq -r '[.node_ecosystem.volta_tools[] | select(.kind=="runtime" and .default==true)] | .[0].version' "$INVENTORY_FILE" 2>/dev/null)
+            if [ -n "$volta_node" ] && [ "$volta_node" != "null" ]; then
+                _act "Installing Node $volta_node via Volta..."
+                run_cmd volta install "node@$volta_node" || true
+            fi
+        elif [ -n "$node_ver" ] && [ "$node_ver" != "null" ] && [ "$node_ver" != "not installed" ]; then
+            if ! cmd_exists node; then
+                _info "Node $node_ver needed but no version manager detected"
+                _info "Install via: brew install node (or install volta/fnm/nvm first)"
+            fi
         fi
     fi
 
@@ -673,8 +690,13 @@ phase_08_shell_configs() {
         local path content
         path=$(jq -r ".shell_configs.configs[$i].path" "$INVENTORY_FILE" 2>/dev/null)
         [ -z "$path" ] || [ "$path" = "null" ] && { i=$((i + 1)); continue; }
-        # Expand $HOME in path
-        # path is already absolute from inventory; no transformation needed
+        # Rewrite paths from the inventory's $HOME to the current $HOME
+        # (inventory may have been captured on a machine with a different username)
+        local inv_home
+        inv_home=$(echo "$path" | sed -E 's|^(/Users/[^/]+).*|\1|')
+        if [ "$inv_home" != "$HOME" ] && [ -n "$inv_home" ]; then
+            path="${path/$inv_home/$HOME}"
+        fi
         write_config ".shell_configs.configs[$i].content" "$path"
         i=$((i + 1))
     done
@@ -1146,11 +1168,35 @@ run_phases() {
     "
 
     local phase_num=0
+    local critical_failure="false"
     for func in $phase_funcs; do
         phase_num=$((phase_num + 1))
         if [ "$phase_num" -lt "$START_PHASE" ]; then continue; fi
-        $func
+        if ! $func; then
+            # Phases 1-4 are critical prerequisites — abort on failure
+            if [ "$phase_num" -le 4 ]; then
+                _err "Critical phase $phase_num failed. Fix the issue and resume with: saamagri.sh --phase $phase_num"
+                critical_failure="true"
+                break
+            else
+                _warn "Phase $phase_num had errors. Continuing with remaining phases."
+            fi
+        fi
     done
+
+    if [ "$critical_failure" = "true" ]; then
+        printf '\n' >&2
+        local f1_plain="  ✘  Setup incomplete (failed at phase $phase_num)"
+        local f1_styled="  ${RED}✘${RST}  ${BOLD}Setup incomplete (failed at phase $phase_num)${RST}"
+        local f2_plain="     Resume: saamagri.sh --phase $phase_num"
+        local f2_styled="     ${DIM}Resume: saamagri.sh --phase $phase_num${RST}"
+        _box_rule "$RED" '╭' '╮'
+        _box_line "$RED" "${#f1_plain}" "$f1_styled"
+        _box_line "$RED" "${#f2_plain}" "$f2_styled"
+        _box_rule "$RED" '╰' '╯'
+        printf '\n' >&2
+        return 1
+    fi
 
     show_completion
 }
