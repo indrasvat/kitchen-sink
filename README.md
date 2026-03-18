@@ -51,18 +51,26 @@ One-command development environment setup scripts.
 
 | Script | Description |
 |--------|-------------|
-| [`saamagri.sh`](shell/dev-setup/saamagri.sh) | Full macOS dev environment setup from a Yantragaṇanā inventory JSON |
+| [`yantraganana.sh`](shell/dev-setup/yantraganana.sh) | Capture full macOS dev environment inventory as JSON |
+| [`saamagri.sh`](shell/dev-setup/saamagri.sh) | Replay an inventory JSON to set up a fresh Mac |
 | [`gameboy-dev-setup-macos.sh`](shell/dev-setup/gameboy-dev-setup-macos.sh) | Complete Game Boy development environment (GBDK-2020, RGBDS, emulators) |
 | [`setup-modern-emacs/`](shell/dev-setup/setup-modern-emacs/) | Modern Emacs setup with Homebrew, LSP, tree-sitter |
 
 #### सामग्री (Sāmagrī)
 
-Inventory-driven macOS dev environment setup. First capture your current machine with [`mac-inventory.sh`](https://github.com/indrasvat/shell-scripts), then replay it on a fresh Mac with Sāmagrī.
+Two-script workflow for cloning your dev environment across Macs.
+
+**Step 1 — Capture** with यन्त्रगणना (Yantragaṇanā): scans all package managers, configs, and tools into a single JSON file.
+
+**Step 2 — Replay** with सामग्री (Sāmagrī): reads that JSON on a fresh Mac and installs everything in the right order.
 
 **17 phases** in dependency order: Xcode CLT → Homebrew → bash → brew packages → language runtimes → tools → shell configs → git → SSH → tmux → VS Code → fonts → AI agents → Docker → LaunchAgents → macOS defaults.
 
 ```bash
-# Interactive setup (prompts before each phase)
+# On your current Mac — capture everything
+./yantraganana.sh ~/tool-inventory.json
+
+# On the new Mac — replay interactively
 ./saamagri.sh --inventory ~/tool-inventory.json
 
 # Unattended setup for a work Mac
