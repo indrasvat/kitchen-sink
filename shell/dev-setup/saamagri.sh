@@ -114,8 +114,10 @@ _bootstrap_path() {
         eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
     fi
     # Cargo/Rust
-    # shellcheck source=/dev/null
-    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" 2>/dev/null || true
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck source=/dev/null
+        . "$HOME/.cargo/env" 2>/dev/null || true
+    fi
     # Volta
     if [ -d "$HOME/.volta" ]; then
         export VOLTA_HOME="$HOME/.volta"
