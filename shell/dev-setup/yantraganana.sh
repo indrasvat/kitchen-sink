@@ -6,12 +6,18 @@
 # ╰──────────────────────────────────────────────────────────────╯
 set -euo pipefail
 
-readonly VERSION="2.0.0"
+readonly VERSION="2.1.0"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 readonly TIMESTAMP
 HOSTNAME=$(hostname -s)
 readonly HOSTNAME
 readonly OUTPUT_FILE="${1:-$HOME/tool-inventory-$(date +%Y%m%d-%H%M%S).json}"
+
+# ── Log file ───────────────────────────────────────────────────
+readonly LOG_DIR="${HOME}/.local/state/yantraganana"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/yantraganana-$(date +%Y%m%d-%H%M%S).log"
+readonly LOG_FILE
 
 # ── Colors ───────────────────────────────────────────────────────
 readonly RST=$'\033[0m'
@@ -35,12 +41,19 @@ readonly RULE='─────────────────────�
 readonly BW=42  # inner width for framed boxes
 
 # ── Logging ──────────────────────────────────────────────────────
-_info()  { printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
-_done()  { printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
-_warn()  { printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
-_skip()  { printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
+_log() {
+    local level="$1"; shift
+    printf '%s [%-5s] %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$level" "$*" >> "$LOG_FILE"
+}
+
+_info()  { _log INFO  "$*"; printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
+_done()  { _log OK    "$*"; printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
+_warn()  { _log WARN  "$*"; printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
+_skip()  { _log SKIP  "$*"; printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
+_error() { _log ERROR "$*"; printf "  ${DIM}${CYN}│${RST}  ${RED}✘${RST}  ${RED}%s${RST}\n" "$*" >&2; }
 
 _phase() {
+    _log PHASE "=== $1 ==="
     local label="$1"
     local used=$(( 2 + 5 + ${#label} + 1 ))
     local pad_len=$(( LINE_W - used ))
@@ -76,7 +89,22 @@ inc() { eval "$1=\$(( $1 + 1 ))"; }
 sgrep() { grep "$@" || true; }
 
 get_version() {
-    ( "$@" 2>&1 || true ) | head -1 | sgrep -oE '[0-9]+\.[0-9]+[.0-9]*' | head -1
+    _timeout_run 10 "$@" 2>&1 | head -1 | sgrep -oE '[0-9]+\.[0-9]+[.0-9]*' | head -1
+}
+
+# Run a command with a timeout (seconds). Stdout captured; returns empty on timeout.
+# Uses perl alarm() — always available on macOS, no GNU coreutils needed.
+_timeout_run() {
+    local secs="$1"; shift
+    perl -e '
+        use POSIX ":sys_wait_h";
+        $SIG{ALRM} = sub { kill("TERM", $pid) if $pid; exit 1 };
+        alarm('"$secs"');
+        $pid = open(my $fh, "-|", @ARGV) or exit 1;
+        while (<$fh>) { print }
+        close $fh;
+        alarm(0);
+    ' -- "$@" 2>/dev/null || true
 }
 
 json_escape() {
@@ -193,7 +221,7 @@ collect_brew() {
         local cask_ver="unknown"
         # Get the installed version from the Caskroom directory
         if [[ -d "$caskroom/$cask_name" ]]; then
-            cask_ver=$(find "$caskroom/$cask_name" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+            cask_ver=$(find "$caskroom/$cask_name" -maxdepth 1 -mindepth 1 -type d -not -name '.metadata' 2>/dev/null | head -1 | xargs basename 2>/dev/null)
             [[ -z "$cask_ver" ]] && cask_ver="unknown"
         fi
         [[ $cask_count -gt 0 ]] && casks_json+=","
@@ -658,16 +686,19 @@ collect_runtimes() {
     [[ -z "$java_version" ]] && java_version="not installed"
     cmd_exists swift && swift_version=$(get_version swift --version)
     [[ -z "$swift_version" ]] && swift_version="not installed"
-    cmd_exists ruby && ruby_version=$(ruby --version 2>/dev/null | awk '{print $2}' || echo "installed")
-    cmd_exists deno && deno_version=$(deno --version 2>/dev/null | head -1 | awk '{print $2}' || echo "installed")
+    cmd_exists ruby && ruby_version=$(_timeout_run 10 ruby --version 2>/dev/null | awk '{print $2}')
+    [[ -z "$ruby_version" ]] && ruby_version="not installed"
+    cmd_exists deno && deno_version=$(_timeout_run 10 deno --version 2>/dev/null | head -1 | awk '{print $2}')
+    [[ -z "$deno_version" ]] && deno_version="not installed"
     cmd_exists lua && lua_version=$(get_version lua -v)
     [[ -z "$lua_version" ]] && lua_version="not installed"
     cmd_exists luarocks && luarocks_version=$(get_version luarocks --version)
     [[ -z "$luarocks_version" ]] && luarocks_version="not installed"
-    cmd_exists zig && zig_version=$(zig version 2>/dev/null || echo "installed")
+    cmd_exists zig && zig_version=$(_timeout_run 10 zig version 2>/dev/null)
+    [[ -z "$zig_version" ]] && cmd_exists zig && zig_version="installed"
 
     local xcode_version="not installed" xcode_path="not installed"
-    cmd_exists xcodebuild && xcode_version=$(xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}')
+    cmd_exists xcodebuild && xcode_version=$(_timeout_run 10 xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}')
     cmd_exists xcode-select && xcode_path=$(xcode-select -p 2>/dev/null || echo "not set")
 
     # SDKMAN
@@ -1210,7 +1241,14 @@ main() {
     _box_rule "$CYN" '╰' '╯'
     printf '\n' >&2
 
-    _info "Output: ${UL}${OUTPUT_FILE}${RST}"
+    _log INFO "=== Yantraganana v${VERSION} started ==="
+    _log INFO "Output: $OUTPUT_FILE"
+    _log INFO "Log: $LOG_FILE"
+    _log INFO "Hostname: $HOSTNAME"
+
+    # These use ANSI styling, so call printf directly (not _info which would log escapes)
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Output: ${UL}%s${RST}\n" "$OUTPUT_FILE" >&2
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Log: ${UL}%s${RST}\n" "$LOG_FILE" >&2
     _info "Timestamp: $TIMESTAMP"
 
     local start_time; start_time=$(date +%s)
@@ -1264,11 +1302,14 @@ main() {
             local line2_plain="     Valid JSON written successfully"
             local line2_styled="     Valid JSON written successfully"
 
+            _log INFO "Inventory complete (${elapsed}s, ${size_str}), valid JSON"
+
             _box_rule "$BGRN" '╭' '╮'
             _box_line "$BGRN" "${#line1_plain}" "$line1_styled"
             _box_line "$BGRN" "${#line2_plain}" "$line2_styled"
             _box_rule "$BGRN" '╰' '╯'
-            printf "  ${DIM}${UL}%s${RST}\n\n" "$OUTPUT_FILE" >&2
+            printf "  ${DIM}${UL}%s${RST}\n" "$OUTPUT_FILE" >&2
+            printf "  ${DIM}Log: ${UL}%s${RST}\n\n" "$LOG_FILE" >&2
         else
             local f1_plain="  ✘  JSON validation failed"
             local f1_styled="  ${RED}✘${RST}  ${BOLD}JSON validation failed${RST}"
@@ -1276,10 +1317,13 @@ main() {
             local f2_plain="     Run: jq . '${fname}'"
             local f2_styled="     ${DIM}Run: jq . '${fname}'${RST}"
 
+            _log ERROR "JSON validation failed for $OUTPUT_FILE"
+
             _box_rule "$RED" '╭' '╮'
             _box_line "$RED" "${#f1_plain}" "$f1_styled"
             _box_line "$RED" "${#f2_plain}" "$f2_styled"
             _box_rule "$RED" '╰' '╯'
+            printf "  ${DIM}Log: ${UL}%s${RST}\n\n" "$LOG_FILE" >&2
         fi
     else
         local n1_plain="  ✔  Inventory complete  (${elapsed}s)"
@@ -1287,11 +1331,14 @@ main() {
         local n2_plain="     Install jq for JSON validation"
         local n2_styled="     ${DIM}Install jq for JSON validation${RST}"
 
+        _log INFO "Inventory complete (${elapsed}s), jq not available for validation"
+
         _box_rule "$BGRN" '╭' '╮'
         _box_line "$BGRN" "${#n1_plain}" "$n1_styled"
         _box_line "$BGRN" "${#n2_plain}" "$n2_styled"
         _box_rule "$BGRN" '╰' '╯'
-        printf "  ${DIM}${UL}%s${RST}\n\n" "$OUTPUT_FILE" >&2
+        printf "  ${DIM}${UL}%s${RST}\n" "$OUTPUT_FILE" >&2
+        printf "  ${DIM}Log: ${UL}%s${RST}\n\n" "$LOG_FILE" >&2
     fi
 }
 
