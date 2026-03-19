@@ -39,6 +39,12 @@ LOG_FILE=""
 export CURRENT_PHASE=0
 TOTAL_PHASES=17
 
+# Work profile config (set via --work-* flags or interactive prompts)
+WORK_EMAIL=""
+WORK_ORG=""
+WORK_DIR=""
+WORK_SSH_HOST=""
+
 # ── Colors (works on bash 3.2) ───────────────────────────────────
 RST=$'\033[0m'
 DIM=$'\033[2m'
@@ -298,6 +304,55 @@ inv_count() {
     else
         echo "?"
     fi
+}
+
+# Prompt for a value if not already set. Usage: prompt_if_empty VAR "prompt text" "default"
+prompt_if_empty() {
+    local varname="$1" prompt_text="$2" default="${3:-}"
+    local current_val=""
+    eval "current_val=\"\$$varname\""
+    if [ -n "$current_val" ]; then return 0; fi
+    if [ "$AUTO_YES" = "true" ] && [ -n "$default" ]; then
+        eval "$varname=\"$default\""
+        return 0
+    fi
+    local suffix=""
+    [ -n "$default" ] && suffix=" ${DIM}[$default]${RST}"
+    printf "  ${BOLD}${BWHT}%s${RST}%s: " "$prompt_text" "$suffix" >&2
+    local reply
+    read -r reply
+    if [ -z "$reply" ] && [ -n "$default" ]; then reply="$default"; fi
+    eval "$varname=\"\$reply\""
+}
+
+# Collect work profile config interactively if not set via flags
+collect_work_config() {
+    if [ "$PROFILE" != "work" ]; then return 0; fi
+
+    # Only prompt if at least one work flag is missing
+    if [ -n "$WORK_EMAIL" ] && [ -n "$WORK_ORG" ] && [ -n "$WORK_DIR" ]; then
+        return 0
+    fi
+
+    _phase "Work Profile Setup"
+    _info "Configure your work identity (personal identity comes from inventory)"
+
+    prompt_if_empty WORK_EMAIL "Work email" ""
+    prompt_if_empty WORK_ORG "GitHub org (e.g. spectrocloud)" ""
+    prompt_if_empty WORK_DIR "Work repo directory" "$HOME/work/src"
+    prompt_if_empty WORK_SSH_HOST "SSH host alias for work GitHub" "github.com-work"
+
+    if [ -z "$WORK_EMAIL" ]; then
+        _warn "No work email provided — skipping work identity setup"
+        _phase_end
+        return 1
+    fi
+
+    _done "Work email: $WORK_EMAIL"
+    [ -n "$WORK_ORG" ] && _done "Work org: $WORK_ORG"
+    _done "Work dir: $WORK_DIR"
+    _done "SSH host: $WORK_SSH_HOST"
+    _phase_end
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -794,6 +849,53 @@ phase_09_git_config() {
     [ -n "$gitignore_path" ] && [ "$gitignore_path" != "null" ] && \
         write_config '.git_config.global_gitignore' "$gitignore_path"
 
+    # Work profile: add includeIf and write ~/.gitconfig-work
+    if [ "$PROFILE" = "work" ] && [ -n "$WORK_EMAIL" ] && [ -n "$WORK_DIR" ]; then
+        local work_dir_pattern="$WORK_DIR"
+        # Ensure trailing slash for gitdir matching
+        case "$work_dir_pattern" in
+            */) ;; *) work_dir_pattern="${work_dir_pattern}/" ;;
+        esac
+
+        # Add includeIf to .gitconfig if not already present
+        if [ -f "$HOME/.gitconfig" ] && ! grep -q "gitdir:${work_dir_pattern}" "$HOME/.gitconfig" 2>/dev/null; then
+            if [ "$DRY_RUN" = "true" ]; then
+                _info "${DIM}[dry-run]${RST} Would add includeIf to .gitconfig"
+            else
+                printf '\n[includeIf "gitdir:%s"]\n\tpath = ~/.gitconfig-work\n' "$work_dir_pattern" >> "$HOME/.gitconfig"
+                _done "Added includeIf for $work_dir_pattern"
+            fi
+        else
+            _skip "includeIf already present in .gitconfig"
+        fi
+
+        # Write ~/.gitconfig-work
+        local work_gitconfig="[user]\n\temail = ${WORK_EMAIL}"
+        if [ -n "$WORK_ORG" ] && [ -n "$WORK_SSH_HOST" ]; then
+            work_gitconfig="${work_gitconfig}\n[url \"git@${WORK_SSH_HOST}:${WORK_ORG}/\"]\n\tinsteadOf = https://github.com/${WORK_ORG}/"
+        fi
+        if [ -f "$HOME/.gitconfig-work" ]; then
+            _skip ".gitconfig-work already exists"
+        elif [ "$DRY_RUN" = "true" ]; then
+            _info "${DIM}[dry-run]${RST} Would write .gitconfig-work"
+        else
+            printf '%b\n' "$work_gitconfig" > "$HOME/.gitconfig-work"
+            _done "Wrote .gitconfig-work (email=$WORK_EMAIL)"
+        fi
+
+        # Create work directory
+        if [ ! -d "$WORK_DIR" ]; then
+            if [ "$DRY_RUN" = "true" ]; then
+                _info "${DIM}[dry-run]${RST} Would create $WORK_DIR"
+            else
+                mkdir -p "$WORK_DIR"
+                _done "Created $WORK_DIR"
+            fi
+        else
+            _skip "$WORK_DIR already exists"
+        fi
+    fi
+
     mark_phase_complete 9
     _phase_end
 }
@@ -821,26 +923,95 @@ phase_10_ssh_keys() {
     _warn "No SSH key found"
     local reply="n"
     if [ "$AUTO_YES" = "true" ]; then
-        # In non-interactive mode, skip SSH key generation (security-sensitive)
         _skip "SSH key generation skipped in non-interactive mode"
     else
-        printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
+        printf '  %sGenerate a new ed25519 SSH key (personal)?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
         read -r reply
     fi
     if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
         local email
         email=$(inv_get '.git_config.email')
-        _act "Generating ed25519 key..."
+        _act "Generating personal ed25519 key..."
         if [ "$DRY_RUN" != "true" ]; then
             ssh-keygen -t ed25519 -C "${email:-$USER@$(hostname)}" -f "$ssh_dir/id_ed25519" -N ""
-            _done "SSH key generated"
+            _done "Personal SSH key generated"
             _warn "Add to GitHub: cat ~/.ssh/id_ed25519.pub | pbcopy"
         fi
     else
-        _skip "SSH key generation skipped"
+        _skip "Personal SSH key generation skipped"
     fi
 
-    write_config '.ssh.config' "$ssh_dir/config"
+    # Work profile: generate a second SSH key
+    if [ "$PROFILE" = "work" ] && [ -n "$WORK_EMAIL" ] && [ -n "$WORK_SSH_HOST" ]; then
+        local work_key_name="id_ed25519_work"
+        if [ -f "$ssh_dir/$work_key_name" ]; then
+            _done "Work SSH key already exists ($work_key_name)"
+        else
+            local work_reply="n"
+            if [ "$AUTO_YES" = "true" ]; then
+                _skip "Work SSH key generation skipped in non-interactive mode"
+            else
+                printf '  %sGenerate a work ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
+                read -r work_reply
+            fi
+            if [ "$work_reply" = "y" ] || [ "$work_reply" = "Y" ]; then
+                _act "Generating work ed25519 key..."
+                if [ "$DRY_RUN" != "true" ]; then
+                    ssh-keygen -t ed25519 -C "$WORK_EMAIL" -f "$ssh_dir/$work_key_name" -N ""
+                    _done "Work SSH key generated ($work_key_name)"
+                    _warn "Add work key to GitHub: cat ~/.ssh/${work_key_name}.pub | pbcopy"
+                fi
+            else
+                _skip "Work SSH key generation skipped"
+            fi
+        fi
+    fi
+
+    # Write SSH config — use multi-host config if work profile is active
+    if [ "$PROFILE" = "work" ] && [ -n "$WORK_SSH_HOST" ]; then
+        if [ -f "$ssh_dir/config" ]; then
+            if grep -q "$WORK_SSH_HOST" "$ssh_dir/config" 2>/dev/null; then
+                _skip "SSH config already has $WORK_SSH_HOST entry"
+            else
+                # Append work host to existing config
+                backup_file "$ssh_dir/config"
+                if [ "$DRY_RUN" = "true" ]; then
+                    _info "${DIM}[dry-run]${RST} Would append work host to SSH config"
+                else
+                    local work_key_file="id_ed25519_work"
+                    printf '\n# Work GitHub (%s)\nHost %s\n    HostName github.com\n    User git\n    IdentityFile ~/.ssh/%s\n    IdentitiesOnly yes\n' \
+                        "${WORK_ORG:-work}" "$WORK_SSH_HOST" "$work_key_file" >> "$ssh_dir/config"
+                    _done "Appended $WORK_SSH_HOST to SSH config"
+                fi
+            fi
+        else
+            # Write fresh SSH config with both hosts
+            if [ "$DRY_RUN" = "true" ]; then
+                _info "${DIM}[dry-run]${RST} Would write SSH config with personal + work hosts"
+            else
+                local work_key_file="id_ed25519_work"
+                cat > "$ssh_dir/config" <<SSHEOF
+# Personal GitHub
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+
+# Work GitHub (${WORK_ORG:-work})
+Host $WORK_SSH_HOST
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/$work_key_file
+    IdentitiesOnly yes
+SSHEOF
+                chmod 600 "$ssh_dir/config"
+                _done "Wrote SSH config (personal + work hosts)"
+            fi
+        fi
+    else
+        write_config '.ssh.config' "$ssh_dir/config"
+    fi
     mark_phase_complete 10
     _phase_end
 }
@@ -1133,6 +1304,10 @@ ${BOLD}OPTIONS:${RST}
   --inventory PATH        Path to inventory JSON (default: auto-detect)
   --phase N               Start from phase N (resume after failure)
   --profile personal|work Tool profile (default: personal)
+  --work-email EMAIL      Work Git email (prompted if --profile work)
+  --work-org ORG          Work GitHub org for SSH/URL routing
+  --work-dir DIR          Work repo directory (default: ~/work/src)
+  --work-ssh-host HOST    SSH host alias (default: github.com-work)
   --reset                 Clear state, re-run all phases
   --help, -h              Show this help
   --version               Show version
@@ -1157,10 +1332,12 @@ ${BOLD}PHASES:${RST}
   17  macOS defaults
 
 ${BOLD}EXAMPLES:${RST}
-  $(basename "$0")                     # interactive personal setup
-  $(basename "$0") --yes --profile work  # unattended work Mac setup
-  $(basename "$0") --phase 8            # resume from shell configs
-  $(basename "$0") --dry-run            # preview all changes
+  $(basename "$0")                                          # interactive personal setup
+  $(basename "$0") --profile work --work-email me@co.com    # work Mac (prompts for org/dir)
+  $(basename "$0") --profile work --work-email me@co.com \\
+    --work-org acme --work-dir ~/work/src                    # work Mac, fully specified
+  $(basename "$0") --phase 8                                 # resume from shell configs
+  $(basename "$0") --dry-run                                 # preview all changes
 HELP
 }
 
@@ -1180,6 +1357,9 @@ show_banner() {
 $([ "$DRY_RUN" = "true" ] && echo " ${BYEL}(dry-run)${RST}" || echo "")"
     _info "Log:       ${DIM}$LOG_FILE${RST}"
     _info "State:     ${DIM}$STATE_DIR${RST}"
+    if [ "$PROFILE" = "work" ] && [ -n "$WORK_EMAIL" ]; then
+        _info "Work:      ${BOLD}$WORK_EMAIL${RST} → ${DIM}${WORK_DIR:-~/work/src}${RST}"
+    fi
 
     # Phase progress
     local completed=0
@@ -1215,6 +1395,9 @@ show_completion() {
 }
 
 run_phases() {
+    # Collect work profile config before starting phases
+    collect_work_config
+
     local phase_funcs="
         phase_01_xcode_clt
         phase_02_homebrew
@@ -1276,9 +1459,13 @@ main() {
     for arg in "$@"; do
         if [ -n "$next_is" ]; then
             case "$next_is" in
-                inventory) INVENTORY_FILE="$arg" ;;
-                phase)     START_PHASE="$arg" ;;
-                profile)   PROFILE="$arg" ;;
+                inventory)      INVENTORY_FILE="$arg" ;;
+                phase)          START_PHASE="$arg" ;;
+                profile)        PROFILE="$arg" ;;
+                work-email)     WORK_EMAIL="$arg" ;;
+                work-org)       WORK_ORG="$arg" ;;
+                work-dir)       WORK_DIR="$arg" ;;
+                work-ssh-host)  WORK_SSH_HOST="$arg" ;;
             esac
             next_is=""
             continue
@@ -1292,6 +1479,14 @@ main() {
             --phase=*)       START_PHASE="${arg#*=}" ;;
             --profile)       next_is="profile" ;;
             --profile=*)     PROFILE="${arg#*=}" ;;
+            --work-email)    next_is="work-email" ;;
+            --work-email=*)  WORK_EMAIL="${arg#*=}" ;;
+            --work-org)      next_is="work-org" ;;
+            --work-org=*)    WORK_ORG="${arg#*=}" ;;
+            --work-dir)      next_is="work-dir" ;;
+            --work-dir=*)    WORK_DIR="${arg#*=}" ;;
+            --work-ssh-host) next_is="work-ssh-host" ;;
+            --work-ssh-host=*) WORK_SSH_HOST="${arg#*=}" ;;
             --reset)
                 rm -f "$COMPLETED_FILE"
                 echo "State reset — all phases will re-run." >&2
