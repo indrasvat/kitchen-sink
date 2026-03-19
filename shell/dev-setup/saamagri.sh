@@ -1190,8 +1190,9 @@ run_phases() {
         phase_num=$((phase_num + 1))
         if [ "$phase_num" -lt "$START_PHASE" ]; then continue; fi
         if ! $func; then
-            # Phases 1-4 are critical prerequisites — abort on failure
-            if [ "$phase_num" -le 4 ]; then
+            # Phases 1-5 are critical prerequisites — abort on failure
+            # (Phase 5 installs all brew packages that later phases depend on)
+            if [ "$phase_num" -le 5 ]; then
                 _err "Critical phase $phase_num failed. Fix the issue and resume with: saamagri.sh --phase $phase_num"
                 critical_failure="true"
                 break
