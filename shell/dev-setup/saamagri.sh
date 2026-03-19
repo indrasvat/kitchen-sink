@@ -329,8 +329,12 @@ prompt_if_empty() {
 collect_work_config() {
     if [ "$PROFILE" != "work" ]; then return 0; fi
 
-    # Only prompt if at least one work flag is missing
-    if [ -n "$WORK_EMAIL" ] && [ -n "$WORK_ORG" ] && [ -n "$WORK_DIR" ]; then
+    # Apply defaults for optional flags before checking completeness
+    [ -z "$WORK_SSH_HOST" ] && WORK_SSH_HOST="github.com-work"
+    [ -z "$WORK_DIR" ] && WORK_DIR="$HOME/work/src"
+
+    # Only prompt if required work flags are missing
+    if [ -n "$WORK_EMAIL" ] && [ -n "$WORK_ORG" ]; then
         return 0
     fi
 
@@ -869,17 +873,31 @@ phase_09_git_config() {
             _skip "includeIf already present in .gitconfig"
         fi
 
-        # Write ~/.gitconfig-work
+        # Write ~/.gitconfig-work (update if contents changed)
         local work_gitconfig="[user]\n\temail = ${WORK_EMAIL}"
         if [ -n "$WORK_ORG" ] && [ -n "$WORK_SSH_HOST" ]; then
             work_gitconfig="${work_gitconfig}\n[url \"git@${WORK_SSH_HOST}:${WORK_ORG}/\"]\n\tinsteadOf = https://github.com/${WORK_ORG}/"
         fi
+        local desired
+        desired=$(printf '%b\n' "$work_gitconfig")
         if [ -f "$HOME/.gitconfig-work" ]; then
-            _skip ".gitconfig-work already exists"
+            local existing
+            existing=$(cat "$HOME/.gitconfig-work" 2>/dev/null)
+            if [ "$existing" = "$desired" ]; then
+                _skip ".gitconfig-work already up to date"
+            else
+                backup_file "$HOME/.gitconfig-work"
+                if [ "$DRY_RUN" = "true" ]; then
+                    _info "${DIM}[dry-run]${RST} Would update .gitconfig-work"
+                else
+                    printf '%s\n' "$desired" > "$HOME/.gitconfig-work"
+                    _done "Updated .gitconfig-work (email=$WORK_EMAIL)"
+                fi
+            fi
         elif [ "$DRY_RUN" = "true" ]; then
             _info "${DIM}[dry-run]${RST} Would write .gitconfig-work"
         else
-            printf '%b\n' "$work_gitconfig" > "$HOME/.gitconfig-work"
+            printf '%s\n' "$desired" > "$HOME/.gitconfig-work"
             _done "Wrote .gitconfig-work (email=$WORK_EMAIL)"
         fi
 
