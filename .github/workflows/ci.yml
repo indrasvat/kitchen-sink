@@ -28,7 +28,10 @@ jobs:
           cache-dependency-path: go/sarasa/go.sum
 
       - name: Install shellcheck
-        run: sudo apt-get install -y shellcheck
+        run: |
+          SC_VERSION=0.11.0
+          wget -qO- "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJf - --strip-components=1 -C /usr/local/bin "shellcheck-v${SC_VERSION}/shellcheck"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4

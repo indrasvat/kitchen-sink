@@ -59,14 +59,15 @@ RULE='────────────────────────�
 BW=42
 
 # ── Logging ──────────────────────────────────────────────────────
-_info()  { printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
-_done()  { printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
-_warn()  { printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
-_skip()  { printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
-_err()   { printf "  ${DIM}${CYN}│${RST}  ${RED}✘${RST} %s\n" "$*" >&2; }
-_act()   { printf "  ${DIM}${CYN}│${RST}  ${BWHT}▶${RST} %s\n" "$*" >&2; }
+_info()  { _wal INFO  "$*"; printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
+_done()  { _wal OK    "$*"; printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
+_warn()  { _wal WARN  "$*"; printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
+_skip()  { _wal SKIP  "$*"; printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
+_err()   { _wal ERROR "$*"; printf "  ${DIM}${CYN}│${RST}  ${RED}✘${RST} %s\n" "$*" >&2; }
+_act()   { _wal ACT   "$*"; printf "  ${DIM}${CYN}│${RST}  ${BWHT}▶${RST} %s\n" "$*" >&2; }
 
 _phase() {
+    _wal PHASE "=== $1 ==="
     local label="$1"
     local used=$(( 2 + 5 + ${#label} + 1 ))
     local pad_len=$(( LINE_W - used ))
@@ -103,6 +104,32 @@ _wal() {
         | sed $'s/\033\\[[0-9;]*[mGKHJ]//g' >> "$LOG_FILE"
 }
 
+# ── PATH Bootstrap ──────────────────────────────────────────────
+# Rehydrate PATH for tools installed in prior phases (critical for --phase N resume)
+_bootstrap_path() {
+    # Homebrew
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
+    fi
+    # Cargo/Rust
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck source=/dev/null
+        . "$HOME/.cargo/env" 2>/dev/null || true
+    fi
+    # Volta
+    if [ -d "$HOME/.volta" ]; then
+        export VOLTA_HOME="$HOME/.volta"
+        export PATH="$VOLTA_HOME/bin:$PATH"
+    fi
+    # Bun
+    if [ -d "$HOME/.bun" ]; then
+        export BUN_INSTALL="$HOME/.bun"
+        export PATH="$BUN_INSTALL/bin:$PATH"
+    fi
+}
+
 # ── Helpers ──────────────────────────────────────────────────────
 cmd_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -129,23 +156,34 @@ inv_get() {
         jq -r "$1" "$INVENTORY_FILE" 2>/dev/null
     elif cmd_exists python3; then
         python3 -c "
-import json, sys
+import json, sys, re
 try:
     data = json.load(open('$INVENTORY_FILE'))
-    # Navigate the jq-like path
     path = '''$1'''.strip('.')
-    for key in path.split('.'):
-        if key.endswith('[]'):
-            key = key[:-2]
-            data = data[key]
-            for item in data:
-                print(item)
+    tokens = re.findall(r'\[[^\]]*\]|[^.\[\]]+', path)
+    for tok in tokens:
+        if tok == '[]':
+            # Iterate current array
+            for item in (data if isinstance(data, list) else []):
+                print(item if isinstance(item, str) else json.dumps(item))
             sys.exit(0)
-        elif key.startswith('[') and key.endswith(']'):
-            data = data[int(key[1:-1])]
+        elif tok.endswith('[]'):
+            data = data[tok[:-2]]
+            for item in (data if isinstance(data, list) else []):
+                print(item if isinstance(item, str) else json.dumps(item))
+            sys.exit(0)
+        elif tok.startswith('[') and tok.endswith(']'):
+            data = data[int(tok[1:-1])]
         else:
-            data = data[key]
-    print(data if data is not None else '')
+            data = data[tok]
+    if data is None:
+        print('')
+    elif isinstance(data, str):
+        print(data)
+    elif isinstance(data, bool):
+        print(str(data).lower())
+    else:
+        print(json.dumps(data))
 except Exception:
     print('')
 " 2>/dev/null
@@ -158,16 +196,30 @@ except Exception:
 inv_content() {
     if cmd_exists jq; then
         jq -r "$1 // empty" "$INVENTORY_FILE" 2>/dev/null
-    else
+    elif cmd_exists python3; then
         python3 -c "
-import json
+import json, re
 data = json.load(open('$INVENTORY_FILE'))
-path = '''$1'''.strip('.').split('.')
-for key in path:
-    data = data.get(key, '') if isinstance(data, dict) else ''
-    if data == '': break
-print(data if data else '')
+path = '''$1'''.strip('.')
+tokens = re.findall(r'\[[^\]]*\]|[^.\[\]]+', path)
+for tok in tokens:
+    if data is None: break
+    if tok.startswith('[') and tok.endswith(']'):
+        idx = int(tok[1:-1])
+        data = data[idx] if isinstance(data, list) and idx < len(data) else None
+    elif isinstance(data, dict):
+        data = data.get(tok)
+    else:
+        data = None
+if data is None:
+    pass  # print nothing, matching jq's '// empty'
+elif isinstance(data, str):
+    print(data)
+else:
+    print(json.dumps(data))
 " 2>/dev/null
+    else
+        echo ""
     fi
 }
 
@@ -178,7 +230,9 @@ phase_completed() {
 
 mark_phase_complete() {
     mkdir -p "$STATE_DIR"
-    echo "$1" >> "$COMPLETED_FILE"
+    if ! phase_completed "$1"; then
+        echo "$1" >> "$COMPLETED_FILE"
+    fi
     _wal "DONE" "Phase $1 marked complete"
 }
 
@@ -500,8 +554,15 @@ phase_05_brew_packages() {
         else
             _done "All casks already installed"
         fi
+        # Check for any failures
+        local total_failed=$((failed + cfailed))
+        if [ "$total_failed" -gt 0 ]; then
+            _err "$total_failed package(s) failed — not marking phase complete"
+            _phase_end; return 1
+        fi
     else
         _warn "jq not available — cannot parse inventory. Install jq and re-run from --phase 5"
+        _phase_end; return 1
     fi
     mark_phase_complete 5
     _phase_end
@@ -758,10 +819,14 @@ phase_10_ssh_keys() {
     fi
 
     _warn "No SSH key found"
-    # Always ask for SSH key generation, even in --yes mode (security-sensitive)
-    printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
-    local reply
-    read -r reply
+    local reply="n"
+    if [ "$AUTO_YES" = "true" ]; then
+        # In non-interactive mode, skip SSH key generation (security-sensitive)
+        _skip "SSH key generation skipped in non-interactive mode"
+    else
+        printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
+        read -r reply
+    fi
     if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
         local email
         email=$(inv_get '.git_config.email')
@@ -1140,9 +1205,12 @@ show_completion() {
     _box_rule "$BGRN" '╰' '╯'
     printf '\n' >&2
 
-    _info "Log: ${UL}$LOG_FILE${RST}"
-    _info "Backups: ${UL}$BACKUP_DIR${RST}"
-    _info "Re-run any phase: ${BOLD}$(basename "$0") --phase N${RST}"
+    _wal OK "=== Setup complete ==="
+
+    # Log path uses ANSI styling — print directly to avoid logging escapes
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Log: ${UL}%s${RST}\n" "$LOG_FILE" >&2
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Backups: ${UL}%s${RST}\n" "$BACKUP_DIR" >&2
+    _info "Re-run any phase: $(basename "$0") --phase N"
     printf '\n' >&2
 }
 
@@ -1173,8 +1241,9 @@ run_phases() {
         phase_num=$((phase_num + 1))
         if [ "$phase_num" -lt "$START_PHASE" ]; then continue; fi
         if ! $func; then
-            # Phases 1-4 are critical prerequisites — abort on failure
-            if [ "$phase_num" -le 4 ]; then
+            # Phases 1-5 are critical prerequisites — abort on failure
+            # (Phase 5 installs all brew packages that later phases depend on)
+            if [ "$phase_num" -le 5 ]; then
                 _err "Critical phase $phase_num failed. Fix the issue and resume with: saamagri.sh --phase $phase_num"
                 critical_failure="true"
                 break
@@ -1237,6 +1306,9 @@ main() {
     [ "${SAAMAGRI_YES:-}" = "true" ] && AUTO_YES="true"
     [ "${SAAMAGRI_DRY_RUN:-}" = "true" ] && DRY_RUN="true"
     [ -n "${SAAMAGRI_PROFILE:-}" ] && PROFILE="$SAAMAGRI_PROFILE"
+
+    # Bootstrap PATH for tools installed in prior phases (critical for --phase N resume)
+    _bootstrap_path
 
     # Auto-detect inventory file — prefer v2+ (has git_config, ssh, etc.)
     if [ -z "$INVENTORY_FILE" ]; then
