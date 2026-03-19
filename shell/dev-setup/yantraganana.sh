@@ -1129,6 +1129,45 @@ collect_gemini_config() {
                    extensions: $extensions}}'
 }
 
+# ── Agent skills (npx skills) ────────────────────────────────────
+collect_agent_skills() {
+    _phase "Agent Skills"
+
+    local lock_file="$HOME/.agents/.skill-lock.json"
+    if [[ ! -f "$lock_file" ]]; then
+        _skip "No skill-lock.json found (npx skills not used)"
+        _phase_end
+        _emit 22-agent-skills jq -n '{agent_skills: {installed: false}}'
+        return
+    fi
+
+    # Capture the full lock file — it has source, sourceType, skillPath for each skill
+    local lock_json
+    lock_json=$(jq '.skills' "$lock_file" 2>/dev/null)
+    [[ -z "$lock_json" || "$lock_json" == "null" ]] && lock_json="{}"
+    local skill_count
+    skill_count=$(echo "$lock_json" | jq 'length')
+
+    # Also capture which skill dirs exist under ~/.agents/skills/
+    local dirs_json="[]"
+    if [[ -d "$HOME/.agents/skills" ]]; then
+        dirs_json=$(find "$HOME/.agents/skills" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null \
+            | sort | jq -R '.' | jq -s '.')
+        [[ -z "$dirs_json" || "$dirs_json" == "null" ]] && dirs_json="[]"
+    fi
+
+    _done "$skill_count skills in lock file"
+    _phase_end
+
+    _emit 22-agent-skills jq -n \
+        --argjson lock "$lock_json" \
+        --argjson dirs "$dirs_json" \
+        '{agent_skills: {installed: true,
+                         skill_count: ($lock | length),
+                         lock: $lock,
+                         dirs: $dirs}}'
+}
+
 # ── macOS defaults (dev-relevant) ────────────────────────────────
 collect_macos_defaults() {
     _phase "macOS Defaults"
@@ -1218,6 +1257,7 @@ main() {
     collect_claude_config
     collect_codex_config
     collect_gemini_config
+    collect_agent_skills
     collect_macos_defaults
 
     # Merge all fragments into one JSON object
