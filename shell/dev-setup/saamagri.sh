@@ -129,22 +129,22 @@ inv_get() {
         jq -r "$1" "$INVENTORY_FILE" 2>/dev/null
     elif cmd_exists python3; then
         python3 -c "
-import json, sys
+import json, sys, re
 try:
     data = json.load(open('$INVENTORY_FILE'))
-    # Navigate the jq-like path
     path = '''$1'''.strip('.')
-    for key in path.split('.'):
-        if key.endswith('[]'):
-            key = key[:-2]
-            data = data[key]
+    # Tokenize: split 'foo[0].bar' into ['foo', '[0]', 'bar']
+    tokens = re.findall(r'\[[^\]]*\]|[^.\[\]]+', path)
+    for tok in tokens:
+        if tok.endswith('[]'):
+            data = data[tok[:-2]]
             for item in data:
                 print(item)
             sys.exit(0)
-        elif key.startswith('[') and key.endswith(']'):
-            data = data[int(key[1:-1])]
+        elif tok.startswith('[') and tok.endswith(']'):
+            data = data[int(tok[1:-1])]
         else:
-            data = data[key]
+            data = data[tok]
     print(data if data is not None else '')
 except Exception:
     print('')
@@ -160,12 +160,28 @@ inv_content() {
         jq -r "$1 // empty" "$INVENTORY_FILE" 2>/dev/null
     else
         python3 -c "
-import json
+import json, re
 data = json.load(open('$INVENTORY_FILE'))
-path = '''$1'''.strip('.').split('.')
-for key in path:
-    data = data.get(key, '') if isinstance(data, dict) else ''
-    if data == '': break
+path = '''$1'''.strip('.')
+# Split on '.' but keep [N] attached to their key
+for part in re.split(r'\.(?![^\[]*\])', path):
+    if data == '' or data is None: break
+    m = re.match(r'([^\[]*)\[(\d+)\](.*)', part)
+    if m:
+        key, idx, rest = m.group(1), int(m.group(2)), m.group(3)
+        if key:
+            data = data.get(key, '') if isinstance(data, dict) else ''
+        if isinstance(data, list) and idx < len(data):
+            data = data[idx]
+        else:
+            data = ''
+        if rest and rest.startswith('.'):
+            for sub in rest.lstrip('.').split('.'):
+                data = data.get(sub, '') if isinstance(data, dict) else ''
+    elif isinstance(data, dict):
+        data = data.get(part, '')
+    else:
+        data = ''
 print(data if data else '')
 " 2>/dev/null
     fi
@@ -502,6 +518,7 @@ phase_05_brew_packages() {
         fi
     else
         _warn "jq not available — cannot parse inventory. Install jq and re-run from --phase 5"
+        _phase_end; return 1
     fi
     mark_phase_complete 5
     _phase_end
