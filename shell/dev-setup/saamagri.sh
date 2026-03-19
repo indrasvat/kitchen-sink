@@ -45,6 +45,10 @@ WORK_ORG=""
 WORK_DIR=""
 WORK_SSH_HOST=""
 
+# Sudo state
+SUDO_KEEPALIVE_PID=""
+SUDO_AVAILABLE="false"
+
 # ── Colors (works on bash 3.2) ───────────────────────────────────
 RST=$'\033[0m'
 DIM=$'\033[2m'
@@ -133,6 +137,60 @@ _bootstrap_path() {
     if [ -d "$HOME/.bun" ]; then
         export BUN_INSTALL="$HOME/.bun"
         export PATH="$BUN_INSTALL/bin:$PATH"
+    fi
+}
+
+# ── Sudo Lifecycle ──────────────────────────────────────────────
+# Prime sudo credentials and start a keepalive for long-running phases.
+# On IT-managed Macs, users must activate admin via Self Service first.
+_sudo_prime() {
+    if [ "$DRY_RUN" = "true" ]; then
+        SUDO_AVAILABLE="true"
+        return 0
+    fi
+
+    # Try non-interactive first (cached credentials or sudoers-based access)
+    if sudo -n true 2>/dev/null; then
+        SUDO_AVAILABLE="true"
+        _done "sudo credentials cached"
+        return 0
+    fi
+
+    # Prompt for password
+    _info "Phases 2, 4, and 5 require sudo — enter your password to continue"
+    if sudo -v 2>/dev/null; then
+        SUDO_AVAILABLE="true"
+        _done "sudo credentials acquired"
+        return 0
+    fi
+
+    # Diagnose why sudo failed
+    if ! dscl . -read /Groups/admin GroupMembership 2>/dev/null | grep -qw "$USER"; then
+        _warn "User '$USER' is not in the admin group"
+        _warn "On managed Macs, activate admin access via Self Service first"
+    else
+        _warn "User is admin but sudo failed — credential issue or policy restriction"
+    fi
+    SUDO_AVAILABLE="false"
+    return 1
+}
+
+# Background loop to keep sudo credentials alive (5-min default timeout)
+_sudo_keepalive_start() {
+    if [ "$DRY_RUN" = "true" ] || [ "$SUDO_AVAILABLE" != "true" ]; then
+        return 0
+    fi
+    ( while true; do sudo -n true 2>/dev/null; sleep 240; done ) &
+    SUDO_KEEPALIVE_PID=$!
+    _wal "SUDO" "keepalive started (pid=$SUDO_KEEPALIVE_PID)"
+}
+
+_sudo_keepalive_stop() {
+    if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        _wal "SUDO" "keepalive stopped (pid=$SUDO_KEEPALIVE_PID)"
+        SUDO_KEEPALIVE_PID=""
     fi
 }
 
@@ -246,8 +304,14 @@ mark_phase_complete() {
 backup_file() {
     local f="$1"
     if [ -f "$f" ]; then
-        mkdir -p "$BACKUP_DIR"
-        cp "$f" "$BACKUP_DIR/$(basename "$f")"
+        if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+            _err "Cannot create backup dir: $BACKUP_DIR"
+            return 1
+        fi
+        if ! cp "$f" "$BACKUP_DIR/$(basename "$f")" 2>/dev/null; then
+            _err "Cannot backup $(basename "$f")"
+            return 1
+        fi
         _info "Backed up $(basename "$f")"
     fi
 }
@@ -270,15 +334,21 @@ write_config() {
             return 0
         fi
     fi
-    backup_file "$target_path"
+    backup_file "$target_path" || true
     local dir
     dir=$(dirname "$target_path")
-    mkdir -p "$dir"
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        _err "Cannot create directory: $dir"
+        return 1
+    fi
     if [ "$DRY_RUN" = "true" ]; then
         _info "${DIM}[dry-run]${RST} Would write $target_path"
         return 0
     fi
-    printf '%s' "$content" > "$target_path"
+    if ! printf '%s' "$content" > "$target_path" 2>/dev/null; then
+        _err "Cannot write to $target_path (permission denied?)"
+        return 1
+    fi
     _done "Wrote $(basename "$target_path")"
 }
 
@@ -512,13 +582,26 @@ phase_04_default_shell() {
     if [ "$DRY_RUN" = "true" ]; then
         _info "${DIM}[dry-run]${RST} Would add $brew_bash to /etc/shells and chsh"
     else
+        local phase4_failed="false"
         # Add to /etc/shells if missing
         if ! grep -qx "$brew_bash" /etc/shells 2>/dev/null; then
             _act "Adding $brew_bash to /etc/shells (requires sudo)..."
-            echo "$brew_bash" | sudo tee -a /etc/shells >/dev/null
+            if ! echo "$brew_bash" | sudo tee -a /etc/shells >/dev/null 2>&1; then
+                _err "Failed to write to /etc/shells — sudo may have expired or be blocked"
+                phase4_failed="true"
+            fi
         fi
-        _act "Changing default shell (requires password)..."
-        chsh -s "$brew_bash"
+        if [ "$phase4_failed" = "false" ]; then
+            _act "Changing default shell (requires password)..."
+            if ! chsh -s "$brew_bash" 2>>"$LOG_FILE"; then
+                _err "chsh failed — may be blocked by enterprise policy"
+                phase4_failed="true"
+            fi
+        fi
+        if [ "$phase4_failed" = "true" ]; then
+            _err "Phase 4 failed — not marking complete"
+            _phase_end; return 1
+        fi
     fi
     _done "Default shell set to $brew_bash"
     _warn "Open a new terminal for the change to take effect"
@@ -637,6 +720,8 @@ phase_06_language_runtimes() {
         _phase_end; return 0
     fi
 
+    local phase6_critical_fail="false"
+
     # 6a: Rust via rustup (Go, Python/uv, Deno come via brew)
     if ! cmd_exists rustup; then
         _act "Installing Rust via rustup..."
@@ -652,6 +737,7 @@ phase_06_language_runtimes() {
             _done "Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
         else
             _err "Rust installation failed"
+            phase6_critical_fail="true"
         fi
     else
         _done "Rust already installed: $(rustc --version 2>/dev/null | awk '{print $2}')"
@@ -683,6 +769,7 @@ phase_06_language_runtimes() {
             _done "Volta $(volta --version 2>/dev/null)"
         else
             _err "Volta installation failed"
+            phase6_critical_fail="true"
         fi
     else
         _done "Volta already installed: $(volta --version 2>/dev/null)"
@@ -734,6 +821,10 @@ phase_06_language_runtimes() {
         [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ] && _done "SDKMAN already installed"
     fi
 
+    if [ "$phase6_critical_fail" = "true" ]; then
+        _err "Critical runtime installs failed — not marking phase complete"
+        _phase_end; return 1
+    fi
     mark_phase_complete 6
     _phase_end
 }
@@ -752,13 +843,18 @@ phase_07_language_tools() {
         _warn "jq required for this phase"; _phase_end; return 0
     fi
 
+    local phase7_failed=0
+
     # 7a: Cargo binaries
     if cmd_exists cargo; then
         local cbin
         for cbin in $(jq -r '.rust.cargo_binaries[].name' "$INVENTORY_FILE" 2>/dev/null); do
             if cmd_exists "$cbin"; then _skip "$cbin already installed"; continue; fi
             _act "cargo install $cbin"
-            run_cmd cargo install "$cbin" || _warn "Failed: cargo install $cbin"
+            if ! run_cmd cargo install "$cbin"; then
+                _warn "Failed: cargo install $cbin"
+                phase7_failed=$((phase7_failed + 1))
+            fi
         done
     fi
 
@@ -774,7 +870,10 @@ phase_07_language_tools() {
                 esac
             fi
             _act "volta install $pkg_name@$pkg_ver"
-            run_cmd volta install "$pkg_name@$pkg_ver" || _warn "Failed: $pkg_name"
+            if ! run_cmd volta install "$pkg_name@$pkg_ver"; then
+                _warn "Failed: $pkg_name"
+                phase7_failed=$((phase7_failed + 1))
+            fi
         done < <(jq -r '.node_ecosystem.volta_tools[] | select(.kind=="package") | [.name, .version] | @tsv' "$INVENTORY_FILE" 2>/dev/null)
     fi
 
@@ -783,10 +882,17 @@ phase_07_language_tools() {
         local utool
         for utool in $(jq -r '.python_ecosystem.uv_tools[].name' "$INVENTORY_FILE" 2>/dev/null); do
             _act "uv tool install $utool"
-            run_cmd uv tool install "$utool" || _warn "Failed: $utool"
+            if ! run_cmd uv tool install "$utool"; then
+                _warn "Failed: $utool"
+                phase7_failed=$((phase7_failed + 1))
+            fi
         done
     fi
 
+    if [ "$phase7_failed" -gt 0 ]; then
+        _warn "$phase7_failed tool install(s) failed — not marking phase complete"
+        _phase_end; return 1
+    fi
     _done "Language tools installed"
     mark_phase_complete 7
     _phase_end
@@ -1049,9 +1155,12 @@ phase_11_terminal_configs() {
             _act "Installing TPM (tmux plugin manager)..."
             if [ "$DRY_RUN" != "true" ]; then
                 mkdir -p "$(dirname "$tpm_dir")"
-                git clone https://github.com/tmux-plugins/tpm "$tpm_dir" >> "$LOG_FILE" 2>&1 || true
+                if git clone https://github.com/tmux-plugins/tpm "$tpm_dir" >> "$LOG_FILE" 2>&1; then
+                    _done "TPM installed"
+                else
+                    _err "TPM clone failed (network or GitHub access issue?)"
+                fi
             fi
-            _done "TPM installed"
         else
             _done "TPM already installed"
         fi
@@ -1060,11 +1169,14 @@ phase_11_terminal_configs() {
         if [ -x "$tpm_dir/bin/install_plugins" ]; then
             _act "Installing tmux plugins..."
             if [ "$DRY_RUN" != "true" ]; then
-                "$tpm_dir/bin/install_plugins" >> "$LOG_FILE" 2>&1 || true
+                if "$tpm_dir/bin/install_plugins" >> "$LOG_FILE" 2>&1; then
+                    local plugin_count
+                    plugin_count=$(inv_count '.shell_configs.tmux_plugins')
+                    _done "$plugin_count tmux plugins"
+                else
+                    _warn "Some tmux plugins may have failed to install"
+                fi
             fi
-            local plugin_count
-            plugin_count=$(inv_count '.shell_configs.tmux_plugins')
-            _done "$plugin_count tmux plugins"
         fi
     fi
 
@@ -1251,6 +1363,12 @@ phase_17_macos_defaults() {
 
     if ! confirm_phase 17 "macOS Defaults (Dock, Keyboard, Finder)"; then _phase_end; return 0; fi
 
+    # Detect MDM-managed preferences
+    if [ -d "/Library/Managed Preferences" ] || profiles -P 2>/dev/null | grep -q "com.apple.dock\|NSGlobalDomain\|com.apple.finder"; then
+        _warn "MDM configuration profiles detected — some defaults may be managed"
+        _warn "Settings will be applied but may be overridden by your org's policy"
+    fi
+
     if cmd_exists jq; then
         local dock_hide dock_size
         dock_hide=$(jq -r '.macos_defaults.dock.autohide' "$INVENTORY_FILE" 2>/dev/null)
@@ -1415,6 +1533,23 @@ show_completion() {
 run_phases() {
     # Collect work profile config before starting phases
     collect_work_config
+
+    # Prime sudo only if privileged phases (2, 4, 5) will actually run
+    local needs_sudo="false"
+    if [ "$START_PHASE" -le 5 ]; then
+        local p
+        for p in 2 4 5; do
+            if [ "$p" -ge "$START_PHASE" ] && ! phase_completed "$p"; then
+                needs_sudo="true"
+                break
+            fi
+        done
+    fi
+    if [ "$needs_sudo" = "true" ]; then
+        _sudo_prime || _warn "Continuing without sudo — phases 2/4/5 may fail"
+        _sudo_keepalive_start
+        trap '_sudo_keepalive_stop' EXIT INT TERM
+    fi
 
     local phase_funcs="
         phase_01_xcode_clt
