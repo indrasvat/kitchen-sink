@@ -110,7 +110,7 @@ _timeout_run() {
         while (<$fh>) { print }
         close $fh;
         alarm(0);
-    ' -- "$@" 2>/dev/null || true
+    ' -- "$@" || true
 }
 
 # Read a file as a JSON string (max 50KB), or null if missing
@@ -874,12 +874,18 @@ collect_vscode() {
 collect_fonts() {
     _phase "Developer Fonts"
 
-    local fonts_json
-    fonts_json=$(find "$HOME/Library/Fonts" /Library/Fonts -maxdepth 1 \
-        \( -name "*.ttf" -o -name "*.otf" -o -name "*.ttc" \) -exec basename {} \; 2>/dev/null \
-        | sort -u \
-        | sgrep -iE 'nerd|mono|code|fira|jetbrains|hack|iosevka|cascadia|source.?code|inconsolata|menlo|sf.?mono' \
-        | jq -R '.' | jq -s '.')
+    local font_dirs=()
+    [[ -d "$HOME/Library/Fonts" ]] && font_dirs+=("$HOME/Library/Fonts")
+    [[ -d "/Library/Fonts" ]] && font_dirs+=("/Library/Fonts")
+
+    local fonts_json="[]"
+    if [[ ${#font_dirs[@]} -gt 0 ]]; then
+        fonts_json=$(find "${font_dirs[@]}" -maxdepth 1 \
+            \( -name "*.ttf" -o -name "*.otf" -o -name "*.ttc" \) -exec basename {} \; 2>/dev/null \
+            | sort -u \
+            | sgrep -iE 'nerd|mono|code|fira|jetbrains|hack|iosevka|cascadia|source.?code|inconsolata|menlo|sf.?mono' \
+            | jq -R '.' | jq -s '.')
+    fi
     [[ -z "$fonts_json" || "$fonts_json" == "null" ]] && fonts_json="[]"
     local font_count
     font_count=$(echo "$fonts_json" | jq 'length')
