@@ -149,15 +149,7 @@ _sudo_prime() {
         return 0
     fi
 
-    # Check if user is in admin group
-    if ! dscl . -read /Groups/admin GroupMembership 2>/dev/null | grep -qw "$USER"; then
-        _warn "User '$USER' is not in the admin group"
-        _warn "On managed Macs, activate admin access via Self Service first"
-        SUDO_AVAILABLE="false"
-        return 1
-    fi
-
-    # Try non-interactive first (cached credentials)
+    # Try non-interactive first (cached credentials or sudoers-based access)
     if sudo -n true 2>/dev/null; then
         SUDO_AVAILABLE="true"
         _done "sudo credentials cached"
@@ -172,8 +164,13 @@ _sudo_prime() {
         return 0
     fi
 
-    _warn "Could not acquire sudo — phases requiring admin will be skipped or may fail"
-    _warn "On managed Macs, ensure Self Service admin access is active"
+    # Diagnose why sudo failed
+    if ! dscl . -read /Groups/admin GroupMembership 2>/dev/null | grep -qw "$USER"; then
+        _warn "User '$USER' is not in the admin group"
+        _warn "On managed Macs, activate admin access via Self Service first"
+    else
+        _warn "User is admin but sudo failed — credential issue or policy restriction"
+    fi
     SUDO_AVAILABLE="false"
     return 1
 }
@@ -1537,10 +1534,22 @@ run_phases() {
     # Collect work profile config before starting phases
     collect_work_config
 
-    # Prime sudo and start keepalive (needed for phases 2, 4, 5)
-    _sudo_prime || _warn "Continuing without sudo — some phases may fail"
-    _sudo_keepalive_start
-    trap '_sudo_keepalive_stop' EXIT INT TERM
+    # Prime sudo only if privileged phases (2, 4, 5) will actually run
+    local needs_sudo="false"
+    if [ "$START_PHASE" -le 5 ]; then
+        local p
+        for p in 2 4 5; do
+            if [ "$p" -ge "$START_PHASE" ] && ! phase_completed "$p"; then
+                needs_sudo="true"
+                break
+            fi
+        done
+    fi
+    if [ "$needs_sudo" = "true" ]; then
+        _sudo_prime || _warn "Continuing without sudo — phases 2/4/5 may fail"
+        _sudo_keepalive_start
+        trap '_sudo_keepalive_stop' EXIT INT TERM
+    fi
 
     local phase_funcs="
         phase_01_xcode_clt
