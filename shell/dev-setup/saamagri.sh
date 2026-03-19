@@ -59,14 +59,15 @@ RULE='────────────────────────�
 BW=42
 
 # ── Logging ──────────────────────────────────────────────────────
-_info()  { printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
-_done()  { printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
-_warn()  { printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
-_skip()  { printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
-_err()   { printf "  ${DIM}${CYN}│${RST}  ${RED}✘${RST} %s\n" "$*" >&2; }
-_act()   { printf "  ${DIM}${CYN}│${RST}  ${BWHT}▶${RST} %s\n" "$*" >&2; }
+_info()  { _wal INFO  "$*"; printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} %s\n" "$*" >&2; }
+_done()  { _wal OK    "$*"; printf "  ${DIM}${CYN}│${RST}  ${BGRN}✔${RST} %s\n" "$*" >&2; }
+_warn()  { _wal WARN  "$*"; printf "  ${DIM}${CYN}│${RST}  ${BYEL}⚠${RST}  ${YEL}%s${RST}\n" "$*" >&2; }
+_skip()  { _wal SKIP  "$*"; printf "  ${DIM}${CYN}│${RST}  ${DIM}○ %s${RST}\n" "$*" >&2; }
+_err()   { _wal ERROR "$*"; printf "  ${DIM}${CYN}│${RST}  ${RED}✘${RST} %s\n" "$*" >&2; }
+_act()   { _wal ACT   "$*"; printf "  ${DIM}${CYN}│${RST}  ${BWHT}▶${RST} %s\n" "$*" >&2; }
 
 _phase() {
+    _wal PHASE "=== $1 ==="
     local label="$1"
     local used=$(( 2 + 5 + ${#label} + 1 ))
     local pad_len=$(( LINE_W - used ))
@@ -1157,9 +1158,12 @@ show_completion() {
     _box_rule "$BGRN" '╰' '╯'
     printf '\n' >&2
 
-    _info "Log: ${UL}$LOG_FILE${RST}"
-    _info "Backups: ${UL}$BACKUP_DIR${RST}"
-    _info "Re-run any phase: ${BOLD}$(basename "$0") --phase N${RST}"
+    _wal OK "=== Setup complete ==="
+
+    # Log path uses ANSI styling — print directly to avoid logging escapes
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Log: ${UL}%s${RST}\n" "$LOG_FILE" >&2
+    printf "  ${DIM}${CYN}│${RST}  ${CYN}▸${RST} Backups: ${UL}%s${RST}\n" "$BACKUP_DIR" >&2
+    _info "Re-run any phase: $(basename "$0") --phase N"
     printf '\n' >&2
 }
 
