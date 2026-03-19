@@ -34,6 +34,7 @@ INVENTORY_FILE=""
 AUTO_YES="false"
 DRY_RUN="false"
 START_PHASE=1
+RERUN="false"
 PROFILE="personal"
 LOG_FILE=""
 export CURRENT_PHASE=0
@@ -1305,6 +1306,45 @@ phase_14_ai_agents() {
         fi
     fi
 
+    # Agent skills (npx skills add)
+    local phase14_failed="false"
+    if cmd_exists jq && cmd_exists npx; then
+        local skill_installed
+        skill_installed=$(inv_get '.agent_skills.installed')
+        if [ "$skill_installed" = "true" ]; then
+            local skill_sources
+            # Filter out null/empty sources, deduplicate
+            skill_sources=$(jq -r '[.agent_skills.lock | to_entries[].value.source // empty | select(. != "")] | unique | .[]' "$INVENTORY_FILE" 2>/dev/null)
+            if [ -n "$skill_sources" ]; then
+                local src_count
+                src_count=$(echo "$skill_sources" | wc -l | tr -d ' ')
+                _info "$src_count skill source(s) to install"
+                local skills_failed=0
+                # Use while-read to handle sources safely (no word splitting)
+                echo "$skill_sources" | while IFS= read -r src; do
+                    [ -z "$src" ] && continue
+                    _act "npx skills add $src -g --yes --all"
+                    if [ "$DRY_RUN" = "true" ]; then
+                        _info "${DIM}[dry-run]${RST} Would install skills from $src"
+                    elif ! run_cmd npx --yes skills add "$src" -g --yes --all; then
+                        _warn "Failed to install skills from $src"
+                        skills_failed=$((skills_failed + 1))
+                    fi
+                done
+                if [ "$skills_failed" -eq 0 ]; then
+                    _done "Agent skills installed"
+                else
+                    _warn "$skills_failed skill source(s) failed"
+                    phase14_failed="true"
+                fi
+            fi
+        fi
+    fi
+
+    if [ "$phase14_failed" = "true" ]; then
+        _warn "Some Phase 14 installs failed — not marking complete"
+        _phase_end; return 1
+    fi
     mark_phase_complete 14
     _phase_end
 }
@@ -1439,6 +1479,7 @@ ${BOLD}OPTIONS:${RST}
   --dry-run, -n           Show what would be done, change nothing
   --inventory PATH        Path to inventory JSON (default: auto-detect)
   --phase N               Start from phase N (resume after failure)
+  --rerun                 Force re-run of the --phase N (clear its completion)
   --profile personal|work Tool profile (default: personal)
   --work-email EMAIL      Work Git email (prompted if --profile work)
   --work-org ORG          Work GitHub org for SSH/URL routing
@@ -1630,6 +1671,7 @@ main() {
             --inventory=*)   INVENTORY_FILE="${arg#*=}" ;;
             --phase)         next_is="phase" ;;
             --phase=*)       START_PHASE="${arg#*=}" ;;
+            --rerun)         RERUN="true" ;;
             --profile)       next_is="profile" ;;
             --profile=*)     PROFILE="${arg#*=}" ;;
             --work-email)    next_is="work-email" ;;
@@ -1654,6 +1696,13 @@ main() {
     [ "${SAAMAGRI_YES:-}" = "true" ] && AUTO_YES="true"
     [ "${SAAMAGRI_DRY_RUN:-}" = "true" ] && DRY_RUN="true"
     [ -n "${SAAMAGRI_PROFILE:-}" ] && PROFILE="$SAAMAGRI_PROFILE"
+
+    # --rerun: clear completion for the start phase so it re-executes
+    if [ "$RERUN" = "true" ] && [ "$START_PHASE" -ge 1 ]; then
+        if [ -f "$COMPLETED_FILE" ]; then
+            sed -i '' "/^${START_PHASE}$/d" "$COMPLETED_FILE" 2>/dev/null
+        fi
+    fi
 
     # Bootstrap PATH for tools installed in prior phases (critical for --phase N resume)
     _bootstrap_path
