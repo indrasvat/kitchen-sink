@@ -104,6 +104,30 @@ _wal() {
         | sed $'s/\033\\[[0-9;]*[mGKHJ]//g' >> "$LOG_FILE"
 }
 
+# ── PATH Bootstrap ──────────────────────────────────────────────
+# Rehydrate PATH for tools installed in prior phases (critical for --phase N resume)
+_bootstrap_path() {
+    # Homebrew
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
+    fi
+    # Cargo/Rust
+    # shellcheck source=/dev/null
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" 2>/dev/null || true
+    # Volta
+    if [ -d "$HOME/.volta" ]; then
+        export VOLTA_HOME="$HOME/.volta"
+        export PATH="$VOLTA_HOME/bin:$PATH"
+    fi
+    # Bun
+    if [ -d "$HOME/.bun" ]; then
+        export BUN_INSTALL="$HOME/.bun"
+        export PATH="$BUN_INSTALL/bin:$PATH"
+    fi
+}
+
 # ── Helpers ──────────────────────────────────────────────────────
 cmd_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -134,19 +158,30 @@ import json, sys, re
 try:
     data = json.load(open('$INVENTORY_FILE'))
     path = '''$1'''.strip('.')
-    # Tokenize: split 'foo[0].bar' into ['foo', '[0]', 'bar']
     tokens = re.findall(r'\[[^\]]*\]|[^.\[\]]+', path)
     for tok in tokens:
-        if tok.endswith('[]'):
+        if tok == '[]':
+            # Iterate current array
+            for item in (data if isinstance(data, list) else []):
+                print(item if isinstance(item, str) else json.dumps(item))
+            sys.exit(0)
+        elif tok.endswith('[]'):
             data = data[tok[:-2]]
-            for item in data:
-                print(item)
+            for item in (data if isinstance(data, list) else []):
+                print(item if isinstance(item, str) else json.dumps(item))
             sys.exit(0)
         elif tok.startswith('[') and tok.endswith(']'):
             data = data[int(tok[1:-1])]
         else:
             data = data[tok]
-    print(data if data is not None else '')
+    if data is None:
+        print('')
+    elif isinstance(data, str):
+        print(data)
+    elif isinstance(data, bool):
+        print(str(data).lower())
+    else:
+        print(json.dumps(data))
 except Exception:
     print('')
 " 2>/dev/null
@@ -159,32 +194,30 @@ except Exception:
 inv_content() {
     if cmd_exists jq; then
         jq -r "$1 // empty" "$INVENTORY_FILE" 2>/dev/null
-    else
+    elif cmd_exists python3; then
         python3 -c "
 import json, re
 data = json.load(open('$INVENTORY_FILE'))
 path = '''$1'''.strip('.')
-# Split on '.' but keep [N] attached to their key
-for part in re.split(r'\.(?![^\[]*\])', path):
-    if data == '' or data is None: break
-    m = re.match(r'([^\[]*)\[(\d+)\](.*)', part)
-    if m:
-        key, idx, rest = m.group(1), int(m.group(2)), m.group(3)
-        if key:
-            data = data.get(key, '') if isinstance(data, dict) else ''
-        if isinstance(data, list) and idx < len(data):
-            data = data[idx]
-        else:
-            data = ''
-        if rest and rest.startswith('.'):
-            for sub in rest.lstrip('.').split('.'):
-                data = data.get(sub, '') if isinstance(data, dict) else ''
+tokens = re.findall(r'\[[^\]]*\]|[^.\[\]]+', path)
+for tok in tokens:
+    if data is None: break
+    if tok.startswith('[') and tok.endswith(']'):
+        idx = int(tok[1:-1])
+        data = data[idx] if isinstance(data, list) and idx < len(data) else None
     elif isinstance(data, dict):
-        data = data.get(part, '')
+        data = data.get(tok)
     else:
-        data = ''
-print(data if data else '')
+        data = None
+if data is None:
+    pass  # print nothing, matching jq's '// empty'
+elif isinstance(data, str):
+    print(data)
+else:
+    print(json.dumps(data))
 " 2>/dev/null
+    else
+        echo ""
     fi
 }
 
@@ -195,7 +228,9 @@ phase_completed() {
 
 mark_phase_complete() {
     mkdir -p "$STATE_DIR"
-    echo "$1" >> "$COMPLETED_FILE"
+    if ! phase_completed "$1"; then
+        echo "$1" >> "$COMPLETED_FILE"
+    fi
     _wal "DONE" "Phase $1 marked complete"
 }
 
@@ -517,6 +552,12 @@ phase_05_brew_packages() {
         else
             _done "All casks already installed"
         fi
+        # Check for any failures
+        local total_failed=$((failed + cfailed))
+        if [ "$total_failed" -gt 0 ]; then
+            _err "$total_failed package(s) failed — not marking phase complete"
+            _phase_end; return 1
+        fi
     else
         _warn "jq not available — cannot parse inventory. Install jq and re-run from --phase 5"
         _phase_end; return 1
@@ -776,10 +817,14 @@ phase_10_ssh_keys() {
     fi
 
     _warn "No SSH key found"
-    # Always ask for SSH key generation, even in --yes mode (security-sensitive)
-    printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
-    local reply
-    read -r reply
+    local reply="n"
+    if [ "$AUTO_YES" = "true" ]; then
+        # In non-interactive mode, skip SSH key generation (security-sensitive)
+        _skip "SSH key generation skipped in non-interactive mode"
+    else
+        printf '  %sGenerate a new ed25519 SSH key?%s %s[y/N]%s ' "${BOLD}${BWHT}" "$RST" "$DIM" "$RST" >&2
+        read -r reply
+    fi
     if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
         local email
         email=$(inv_get '.git_config.email')
@@ -1259,6 +1304,9 @@ main() {
     [ "${SAAMAGRI_YES:-}" = "true" ] && AUTO_YES="true"
     [ "${SAAMAGRI_DRY_RUN:-}" = "true" ] && DRY_RUN="true"
     [ -n "${SAAMAGRI_PROFILE:-}" ] && PROFILE="$SAAMAGRI_PROFILE"
+
+    # Bootstrap PATH for tools installed in prior phases (critical for --phase N resume)
+    _bootstrap_path
 
     # Auto-detect inventory file — prefer v2+ (has git_config, ssh, etc.)
     if [ -z "$INVENTORY_FILE" ]; then
