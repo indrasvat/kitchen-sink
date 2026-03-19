@@ -1143,7 +1143,7 @@ collect_agent_skills() {
 
     # Capture the full lock file — it has source, sourceType, skillPath for each skill
     local lock_json
-    lock_json=$(jq '.skills' "$lock_file" 2>/dev/null)
+    lock_json=$(jq '.skills' "$lock_file" 2>/dev/null) || lock_json="{}"
     [[ -z "$lock_json" || "$lock_json" == "null" ]] && lock_json="{}"
     local skill_count
     skill_count=$(echo "$lock_json" | jq 'length')

@@ -1307,23 +1307,26 @@ phase_14_ai_agents() {
     fi
 
     # Agent skills (npx skills add)
+    local phase14_failed="false"
     if cmd_exists jq && cmd_exists npx; then
         local skill_installed
         skill_installed=$(inv_get '.agent_skills.installed')
         if [ "$skill_installed" = "true" ]; then
             local skill_sources
-            skill_sources=$(jq -r '[.agent_skills.lock | to_entries[].value.source] | unique | .[]' "$INVENTORY_FILE" 2>/dev/null)
+            # Filter out null/empty sources, deduplicate
+            skill_sources=$(jq -r '[.agent_skills.lock | to_entries[].value.source // empty | select(. != "")] | unique | .[]' "$INVENTORY_FILE" 2>/dev/null)
             if [ -n "$skill_sources" ]; then
                 local src_count
                 src_count=$(echo "$skill_sources" | wc -l | tr -d ' ')
                 _info "$src_count skill source(s) to install"
-                local src skills_failed=0
-                for src in $skill_sources; do
+                local skills_failed=0
+                # Use while-read to handle sources safely (no word splitting)
+                echo "$skill_sources" | while IFS= read -r src; do
                     [ -z "$src" ] && continue
                     _act "npx skills add $src -g --yes --all"
                     if [ "$DRY_RUN" = "true" ]; then
                         _info "${DIM}[dry-run]${RST} Would install skills from $src"
-                    elif ! run_cmd npx skills add "$src" -g --yes --all; then
+                    elif ! run_cmd npx --yes skills add "$src" -g --yes --all; then
                         _warn "Failed to install skills from $src"
                         skills_failed=$((skills_failed + 1))
                     fi
@@ -1332,11 +1335,16 @@ phase_14_ai_agents() {
                     _done "Agent skills installed"
                 else
                     _warn "$skills_failed skill source(s) failed"
+                    phase14_failed="true"
                 fi
             fi
         fi
     fi
 
+    if [ "$phase14_failed" = "true" ]; then
+        _warn "Some Phase 14 installs failed — not marking complete"
+        _phase_end; return 1
+    fi
     mark_phase_complete 14
     _phase_end
 }
@@ -1690,7 +1698,7 @@ main() {
     [ -n "${SAAMAGRI_PROFILE:-}" ] && PROFILE="$SAAMAGRI_PROFILE"
 
     # --rerun: clear completion for the start phase so it re-executes
-    if [ "$RERUN" = "true" ] && [ "$START_PHASE" -gt 1 ]; then
+    if [ "$RERUN" = "true" ] && [ "$START_PHASE" -ge 1 ]; then
         if [ -f "$COMPLETED_FILE" ]; then
             sed -i '' "/^${START_PHASE}$/d" "$COMPLETED_FILE" 2>/dev/null
         fi
