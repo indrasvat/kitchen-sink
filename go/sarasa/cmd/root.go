@@ -84,7 +84,14 @@ func GetConfig() *config.Config {
 }
 
 // styledHelp renders a styled help output using lipgloss.
-func styledHelp(cmd *cobra.Command, _ []string) {
+// Only applies to the root command; subcommands fall back to cobra's default help.
+func styledHelp(cmd *cobra.Command, args []string) {
+	if cmd.Name() != "sarasa" {
+		cmd.Root().SetHelpFunc(nil)
+		cmd.Help() //nolint:errcheck // help output only
+		cmd.Root().SetHelpFunc(styledHelp)
+		return
+	}
 	// Check if we should use colors
 	mode := ui.DetectOutputMode()
 	useColor := mode != ui.ModePlain
@@ -209,7 +216,7 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		{"sarasa run --dry-run", "Preview upgrades without applying"},
 		{"sarasa run", "Upgrade all outdated packages"},
 		{"sarasa logs", "View upgrade history"},
-		{"sarasa schedule enable", "Enable daily scheduled upgrades"},
+		{"sarasa schedule install", "Enable scheduled upgrades via launchd"},
 	}
 
 	for _, e := range examples {
