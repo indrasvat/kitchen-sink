@@ -98,7 +98,12 @@ func ConfigPath() string {
 
 // Exists returns true if the config file exists at the default path.
 func Exists() bool {
-	_, err := os.Stat(ConfigPath())
+	return ExistsAt(ConfigPath())
+}
+
+// ExistsAt returns true if a config file exists at the given path.
+func ExistsAt(path string) bool {
+	_, err := os.Stat(path)
 	return err == nil
 }
 

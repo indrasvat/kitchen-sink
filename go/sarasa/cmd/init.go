@@ -25,12 +25,13 @@ var initCmd = &cobra.Command{
 	Long: `Interactive setup wizard for sarasa.
 
 Detects available package managers, asks about schedule preferences,
-and generates ~/.config/sarasa/config.toml.
+and generates the config file.
 
 Examples:
   sarasa init                         # Interactive setup
   sarasa init --force                 # Overwrite existing config
-  sarasa init --dry-run               # Preview without writing`,
+  sarasa init --dry-run               # Preview without writing
+  sarasa --config /tmp/s.toml init    # Use custom config path`,
 	RunE: runInit,
 }
 
@@ -40,9 +41,19 @@ func init() {
 	initCmd.Flags().BoolVar(&dryRunInit, "dry-run", false, "preview config without writing")
 }
 
+// configPath returns the effective config path, honoring the root --config flag.
+func configPath() string {
+	if cfgFile != "" {
+		return cfgFile
+	}
+	return config.ConfigPath()
+}
+
 func runInit(_ *cobra.Command, _ []string) error {
-	if config.Exists() && !forceInit {
-		fmt.Printf("  Config already exists: %s\n", config.ConfigPath())
+	path := configPath()
+
+	if config.ExistsAt(path) && !forceInit {
+		fmt.Printf("  Config already exists: %s\n", path)
 		fmt.Println("  Run 'sarasa init --force' to reconfigure.")
 		return nil
 	}
@@ -78,29 +89,31 @@ func runInit(_ *cobra.Command, _ []string) error {
 }
 
 func runInitNonInteractive(availNames []string) error {
+	path := configPath()
 	cfg := config.DefaultConfig()
 	if len(availNames) > 0 {
 		cfg.Managers = availNames
 	}
 
 	if dryRunInit {
-		fmt.Println("[dry-run] Would write config to", config.ConfigPath())
+		fmt.Println("[dry-run] Would write config to", path)
 		fmt.Printf("[dry-run] Managers: %v\n", cfg.Managers)
 		fmt.Printf("[dry-run] Schedule: %v\n", cfg.Schedule.Times)
 		return nil
 	}
 
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveTo(cfg, path); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Config written to %s\n", config.ConfigPath())
+	fmt.Printf("Config written to %s\n", path)
 	fmt.Printf("Managers: %v\n", cfg.Managers)
 	fmt.Println("Run 'sarasa init' interactively to customize schedule.")
 	return nil
 }
 
 func applyInitResult(result wizard.Result) error {
+	path := configPath()
 	cfg := config.DefaultConfig()
 	cfg.Managers = result.Managers
 
@@ -113,7 +126,7 @@ func applyInitResult(result wizard.Result) error {
 	fmt.Println()
 
 	if dryRunInit {
-		fmt.Printf("  %s [dry-run] Would write config to %s\n", ui.IconDot, config.ConfigPath())
+		fmt.Printf("  %s [dry-run] Would write config to %s\n", ui.IconDot, path)
 		fmt.Printf("  %s [dry-run] Managers: %v\n", ui.IconDot, cfg.Managers)
 		if result.Schedule.Times != nil {
 			fmt.Printf("  %s [dry-run] Schedule: %s\n", ui.IconDot, result.Schedule.Label)
@@ -125,11 +138,11 @@ func applyInitResult(result wizard.Result) error {
 		return nil
 	}
 
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveTo(cfg, path); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("  %s Config written to %s\n", ui.IconCheck, config.ConfigPath())
+	fmt.Printf("  %s Config written to %s\n", ui.IconCheck, path)
 	fmt.Printf("  %s Managers: %v\n", ui.IconCheck, cfg.Managers)
 
 	if result.Schedule.Times != nil {
@@ -156,6 +169,10 @@ func applyInitResult(result wizard.Result) error {
 			fmt.Printf("  %s Launchd agent installed\n", ui.IconCheck)
 		}
 	} else {
+		// Uninstall existing agent if present
+		if err := scheduler.Uninstall(); err == nil {
+			fmt.Printf("  %s Launchd agent removed\n", ui.IconCheck)
+		}
 		fmt.Printf("  %s No schedule (run manually with 'sarasa run')\n", ui.IconDot)
 	}
 

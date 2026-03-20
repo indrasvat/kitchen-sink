@@ -151,6 +151,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.result.Managers = append(m.result.Managers, mgr.name)
 					}
 				}
+				// Require at least one manager
+				if len(m.result.Managers) == 0 {
+					break
+				}
 				m.phase = phaseSchedule
 				m.cursor = m.schedIdx
 

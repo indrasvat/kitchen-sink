@@ -161,11 +161,13 @@ check_prereqs() {
         go_ver="$(go version 2>&1 | head -1)"
         _done "go:  ${DIM}${go_ver}${RST}"
 
-        # Check minimum version (1.22+)
+        # Check minimum version (1.25+ required by go.mod)
         local minor
         minor="$(go version | sed -E 's/.*go1\.([0-9]+).*/\1/')"
-        if [ "$minor" -lt 22 ] 2>/dev/null; then
-            _warn "Go 1.22+ recommended (found 1.${minor})"
+        if [ "$minor" -lt 25 ] 2>/dev/null; then
+            _fail "Go 1.25+ required (found 1.${minor})"
+            _warn "  Update: https://go.dev/dl"
+            ok="false"
         fi
     else
         _fail "go:  not found"
