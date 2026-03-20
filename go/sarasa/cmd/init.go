@@ -14,7 +14,10 @@ import (
 	"github.com/indrasvat/sarasa/internal/ui"
 )
 
-var forceInit bool
+var (
+	forceInit  bool
+	dryRunInit bool
+)
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -26,13 +29,15 @@ and generates ~/.config/sarasa/config.toml.
 
 Examples:
   sarasa init                         # Interactive setup
-  sarasa init --force                 # Overwrite existing config`,
+  sarasa init --force                 # Overwrite existing config
+  sarasa init --dry-run               # Preview without writing`,
 	RunE: runInit,
 }
 
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().BoolVar(&forceInit, "force", false, "overwrite existing config")
+	initCmd.Flags().BoolVar(&dryRunInit, "dry-run", false, "preview config without writing")
 }
 
 func runInit(_ *cobra.Command, _ []string) error {
@@ -78,6 +83,13 @@ func runInitNonInteractive(availNames []string) error {
 		cfg.Managers = availNames
 	}
 
+	if dryRunInit {
+		fmt.Println("[dry-run] Would write config to", config.ConfigPath())
+		fmt.Printf("[dry-run] Managers: %v\n", cfg.Managers)
+		fmt.Printf("[dry-run] Schedule: %v\n", cfg.Schedule.Times)
+		return nil
+	}
+
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
@@ -98,11 +110,25 @@ func applyInitResult(result wizard.Result) error {
 		cfg.Schedule.Times = nil
 	}
 
+	fmt.Println()
+
+	if dryRunInit {
+		fmt.Printf("  %s [dry-run] Would write config to %s\n", ui.IconDot, config.ConfigPath())
+		fmt.Printf("  %s [dry-run] Managers: %v\n", ui.IconDot, cfg.Managers)
+		if result.Schedule.Times != nil {
+			fmt.Printf("  %s [dry-run] Schedule: %s\n", ui.IconDot, result.Schedule.Label)
+			fmt.Printf("  %s [dry-run] Would install launchd agent\n", ui.IconDot)
+		} else {
+			fmt.Printf("  %s [dry-run] No schedule\n", ui.IconDot)
+		}
+		fmt.Println()
+		return nil
+	}
+
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Println()
 	fmt.Printf("  %s Config written to %s\n", ui.IconCheck, config.ConfigPath())
 	fmt.Printf("  %s Managers: %v\n", ui.IconCheck, cfg.Managers)
 
