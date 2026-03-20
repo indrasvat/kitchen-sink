@@ -158,22 +158,35 @@ uv run python/games/space-war.py
 
 | Command | Description |
 |---------|-------------|
+| `sarasa init` | Interactive setup wizard (managers, schedule) |
 | `sarasa status` | Check for outdated packages (press `u` to upgrade) |
 | `sarasa run` | Upgrade all outdated packages |
 | `sarasa run --dry-run` | Preview upgrades without applying |
 | `sarasa logs` | Interactive log viewer with search and filtering |
-| `sarasa schedule install` | Enable daily scheduled upgrades via launchd |
+| `sarasa schedule install` | Install launchd agent for scheduled upgrades |
+| `sarasa schedule status` | Check if scheduled upgrades are active |
 
 **Features:**
 - Interactive TUI with colored output and progress indicators
+- One-command install on new machines (no sudo required)
 - Per-manager skip lists and major version upgrade control
 - Structured JSON logging with 30-day retention
 - Graceful degradation to plain text when piped
 
-```bash
-# Install sarasa
-cd go/sarasa && make install
+**Quick install** (no repo clone needed):
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/indrasvat/kitchen-sink/main/go/sarasa/install.sh | bash
+```
+
+Or from a local clone:
+
+```bash
+cd go/sarasa && make install
+sarasa init     # interactive setup (managers + schedule)
+```
+
+```bash
 # Check what needs upgrading
 sarasa status
 
@@ -185,9 +198,6 @@ sarasa run
 
 # View upgrade history
 sarasa logs
-
-# Enable daily scheduled upgrades
-sarasa schedule install
 ```
 
 **Configuration:** `~/.config/sarasa/config.toml`
