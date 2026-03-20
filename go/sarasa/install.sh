@@ -23,7 +23,9 @@ if [ -t 1 ]; then
     DIM=$'\033[2m'
     BOLD=$'\033[1m'
     RED=$'\033[31m'
+    # shellcheck disable=SC2034
     GRN=$'\033[32m'
+    # shellcheck disable=SC2034
     YEL=$'\033[33m'
     CYN=$'\033[36m'
     BGRN=$'\033[92m'
@@ -32,28 +34,41 @@ if [ -t 1 ]; then
 else
     RST="" DIM="" BOLD="" RED="" CYN=""
     # shellcheck disable=SC2034
-    GRN="" YEL=""
+    GRN=""
+    # shellcheck disable=SC2034
+    YEL=""
     BGRN="" BCYN="" BYEL=""
 fi
 
-# ── Layout ──────────────────────────────────────────────────────
-BW=60
+# ── Box-drawing ─────────────────────────────────────────────────
+# Inner width between the two │ chars (including the leading space).
+# All box content is auto-padded to exactly this width.
+BW=54
 
-_rule() {
+# _box_rule LEFT_CORNER RIGHT_CORNER
+_box_rule() {
     local left="$1" right="$2" fill=""
     local i
-    for ((i = 0; i < BW - 2; i++)); do fill="${fill}─"; done
+    for ((i = 0; i < BW; i++)); do fill="${fill}─"; done
     printf "  %s%s%s%s%s\n" "$CYN" "$left" "$fill" "$right" "$RST"
 }
 
+# _box_line [STYLED_CONTENT]
+#   Auto-measures display width by stripping ANSI escapes.
+#   IMPORTANT: Do NOT put emojis or wide Unicode inside box lines — their
+#   display width is unpredictable across terminals and ${#} undercounts.
 _box_line() {
-    local text="$1"
-    local plain_len=${#text}
-    local pad=$((BW - 2 - plain_len))
+    local content="$*"
+    # Strip ANSI escape sequences to get plain text for width measurement
+    local plain
+    plain="$(printf '%s' "$content" | sed $'s/\033\[[0-9;]*m//g')"
+    local dw=${#plain}
+    local pad=$((BW - 1 - dw))
+    if [ "$pad" -lt 0 ]; then pad=0; fi
     local spaces=""
     local i
     for ((i = 0; i < pad; i++)); do spaces="${spaces} "; done
-    printf "  %s│%s %s%s│%s\n" "$CYN" "$RST" "$text" "${CYN}${spaces}" "$RST"
+    printf "  %s│%s %s%s%s│%s\n" "$CYN" "$RST" "$content" "$spaces" "$CYN" "$RST"
 }
 
 # ── Logging ─────────────────────────────────────────────────────
@@ -108,16 +123,17 @@ while [ $# -gt 0 ]; do
 done
 
 # ── Banner ──────────────────────────────────────────────────────
+# No emojis inside box — only plain ASCII + ANSI styles.
 show_banner() {
     printf "\n"
-    _rule "╭" "╮"
+    _box_rule "╭" "╮"
     _box_line ""
-    _box_line "${BOLD}◆ SARASA INSTALLER${RST}"
+    _box_line "${BOLD}SARASA INSTALLER${RST}"
     _box_line ""
     _box_line "Automated global package upgrades for macOS"
-    _box_line "${DIM}🍺 brew  ⚡ volta  📦 npm  🐍 pipx  🥟 bun${RST}"
+    _box_line "${DIM}brew  ·  volta  ·  npm  ·  pipx  ·  bun${RST}"
     _box_line ""
-    _rule "╰" "╯"
+    _box_rule "╰" "╯"
     printf "\n"
 }
 
@@ -158,7 +174,11 @@ check_prereqs() {
     fi
 
     # Install directory
-    if [ -d "$INSTALL_PREFIX" ]; then
+    if [ -f "$INSTALL_PREFIX" ] && [ ! -d "$INSTALL_PREFIX" ]; then
+        _fail "dir: ${INSTALL_PREFIX} exists as a file, not a directory"
+        _warn "  Remove it or choose a different --prefix"
+        ok="false"
+    elif [ -d "$INSTALL_PREFIX" ]; then
         if [ -w "$INSTALL_PREFIX" ]; then
             _done "dir: ${DIM}${INSTALL_PREFIX} (writable)${RST}"
         else
@@ -235,10 +255,8 @@ clone_and_build() {
 
     local size
     if stat --version >/dev/null 2>&1; then
-        # GNU stat
         size="$(stat -c %s "$tmpdir/sarasa" 2>/dev/null)"
     else
-        # BSD stat (macOS)
         size="$(stat -f %z "$tmpdir/sarasa" 2>/dev/null)"
     fi
     local size_mb
@@ -252,14 +270,18 @@ clone_and_build() {
         return 1
     fi
     _done "Binary verified"
-
-    # Copy to tmpdir root for install step
-    # (already there from -o flag above)
 }
 
 # ── Install ─────────────────────────────────────────────────────
 install_binary() {
     local src="$CLEANUP_DIR/sarasa"
+
+    # Refuse if prefix path is a regular file
+    if [ -f "$INSTALL_PREFIX" ] && [ ! -d "$INSTALL_PREFIX" ]; then
+        _fail "${INSTALL_PREFIX} is a file, not a directory"
+        _warn "Remove it first, or use --prefix <dir>"
+        return 1
+    fi
 
     # Create install directory if needed
     if [ ! -d "$INSTALL_PREFIX" ]; then
@@ -290,24 +312,24 @@ install_binary() {
 # ── Post-install ────────────────────────────────────────────────
 post_install() {
     printf "\n"
-    _rule "╭" "╮"
+    _box_rule "╭" "╮"
     _box_line ""
-    _box_line "${BGRN}✔${RST} ${BOLD}Installation complete!${RST}"
+    _box_line "${BGRN}OK${RST} ${BOLD}Installation complete!${RST}"
     _box_line ""
 
     if [ "$RUN_INIT" = "true" ] && [ -t 0 ] && [ -t 1 ]; then
         _box_line "Running ${BOLD}sarasa init${RST} to configure..."
         _box_line ""
-        _rule "╰" "╯"
+        _box_rule "╰" "╯"
         printf "\n"
         "${INSTALL_PREFIX}/sarasa" init
     else
         _box_line "Next steps:"
-        _box_line "  ${BOLD}sarasa init${RST}     — interactive setup"
-        _box_line "  ${BOLD}sarasa status${RST}   — check outdated packages"
-        _box_line "  ${BOLD}sarasa run${RST}      — upgrade everything"
+        _box_line "  ${BOLD}sarasa init${RST}     -- interactive setup"
+        _box_line "  ${BOLD}sarasa status${RST}   -- check outdated packages"
+        _box_line "  ${BOLD}sarasa run${RST}      -- upgrade everything"
         _box_line ""
-        _rule "╰" "╯"
+        _box_rule "╰" "╯"
         printf "\n"
     fi
 }
