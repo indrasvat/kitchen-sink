@@ -172,6 +172,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 		name string
 		desc string
 	}{
+		{"init", "Set up sarasa on this machine"},
 		{"status", "Check for outdated packages (press u to upgrade)"},
 		{"run", "Run package upgrades"},
 		{"logs", "View upgrade logs"},
