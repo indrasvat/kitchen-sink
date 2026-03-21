@@ -96,6 +96,17 @@ func ConfigPath() string {
 	return filepath.Join(homeDir, ".config", "sarasa", "config.toml")
 }
 
+// Exists returns true if the config file exists at the default path.
+func Exists() bool {
+	return ExistsAt(ConfigPath())
+}
+
+// ExistsAt returns true if a config file exists at the given path.
+func ExistsAt(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // Load loads the configuration from the default path or returns defaults.
 func Load() (*Config, error) {
 	return LoadFrom(ConfigPath())
