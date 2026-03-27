@@ -160,6 +160,7 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 		green         = "\033[32m"
 		yellow        = "\033[33m"
 		blue          = "\033[34m"
+		cyan          = "\033[36m"
 		brightCyan    = "\033[96m"
 		brightGreen   = "\033[92m"
 		brightYellow  = "\033[93m"
@@ -177,6 +178,8 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 			return blue
 		case manager.ManagerBun:
 			return brightMagenta
+		case manager.ManagerSkills:
+			return cyan
 		default:
 			return brightCyan
 		}

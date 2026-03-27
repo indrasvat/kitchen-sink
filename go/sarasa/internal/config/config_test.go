@@ -62,9 +62,12 @@ func TestIsManagerEnabled(t *testing.T) {
 		}
 	}
 
-	// Check disabled manager
+	// Check disabled managers
 	if cfg.IsManagerEnabled("npm") {
 		t.Error("expected npm to be disabled in default config")
+	}
+	if cfg.IsManagerEnabled("skills") {
+		t.Error("expected skills to be disabled in default config")
 	}
 
 	// Check unknown manager
@@ -92,6 +95,7 @@ func TestGetSkipList(t *testing.T) {
 	cfg.Skip.Volta = []string{"volta-pkg"}
 	cfg.Skip.Pipx = []string{"pipx-pkg"}
 	cfg.Skip.Bun = []string{"bun-pkg"}
+	cfg.Skip.Skills = []string{"skills-pkg"}
 
 	tests := []struct {
 		manager  string
@@ -102,6 +106,7 @@ func TestGetSkipList(t *testing.T) {
 		{"volta", []string{"volta-pkg"}},
 		{"pipx", []string{"pipx-pkg"}},
 		{"bun", []string{"bun-pkg"}},
+		{"skills", []string{"skills-pkg"}},
 		{"unknown", nil},
 	}
 

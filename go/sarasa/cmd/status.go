@@ -162,6 +162,7 @@ func runStatusPlain(managerNames []string, opts *manager.Options, cfg *configWra
 		green         = "\033[32m"
 		yellow        = "\033[33m"
 		blue          = "\033[34m"
+		cyan          = "\033[36m"
 		brightCyan    = "\033[96m"
 		brightGreen   = "\033[92m"
 		brightYellow  = "\033[93m"
@@ -179,6 +180,8 @@ func runStatusPlain(managerNames []string, opts *manager.Options, cfg *configWra
 			return blue
 		case "bun":
 			return brightMagenta
+		case "skills":
+			return cyan
 		default:
 			return brightCyan
 		}

@@ -33,7 +33,7 @@ ENV/
 *.sublime-*
 
 # Claude Code
-.claude/
+.claude/screenshots/
 
 # Logs
 *.log

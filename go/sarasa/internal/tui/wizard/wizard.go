@@ -76,6 +76,7 @@ func New(availableManagers []string) Model {
 		{"npm", ui.IconNPM},
 		{"pipx", ui.IconPipx},
 		{"bun", ui.IconBun},
+		{"skills", ui.IconSkills},
 	}
 
 	avail := make(map[string]bool)

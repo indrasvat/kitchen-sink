@@ -140,6 +140,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 			{ui.IconNPM, "npm", ui.ColorNPM},
 			{ui.IconPipx, "pipx", ui.ColorPipx},
 			{ui.IconBun, "bun", ui.ColorBun},
+			{ui.IconSkills, "skills", ui.ColorSkills},
 		}
 		b.WriteString("  ")
 		for i, m := range managers {
@@ -153,7 +154,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 		b.WriteString(mutedStyle.Render("  (uses volta when detected, otherwise npm)"))
 		b.WriteString("\n")
 	} else {
-		b.WriteString("  brew · volta · npm · pipx · bun\n")
+		b.WriteString("  brew · volta · npm · pipx · bun · skills\n")
 		b.WriteString("  (uses volta when detected, otherwise npm)\n")
 	}
 	b.WriteString("\n")

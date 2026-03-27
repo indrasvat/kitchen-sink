@@ -20,11 +20,12 @@ type Config struct {
 
 // SkipConfig holds packages to skip per manager.
 type SkipConfig struct {
-	Brew  []string `toml:"brew"`
-	NPM   []string `toml:"npm"`
-	Volta []string `toml:"volta"`
-	Pipx  []string `toml:"pipx"`
-	Bun   []string `toml:"bun"`
+	Brew   []string `toml:"brew"`
+	NPM    []string `toml:"npm"`
+	Volta  []string `toml:"volta"`
+	Pipx   []string `toml:"pipx"`
+	Bun    []string `toml:"bun"`
+	Skills []string `toml:"skills"`
 }
 
 // ScheduleConfig holds scheduling configuration.
@@ -60,11 +61,12 @@ func DefaultConfig() *Config {
 	return &Config{
 		Managers: []string{"brew", "volta", "pipx", "bun"},
 		Skip: SkipConfig{
-			Brew:  []string{},
-			NPM:   []string{},
-			Volta: []string{},
-			Pipx:  []string{},
-			Bun:   []string{},
+			Brew:   []string{},
+			NPM:    []string{},
+			Volta:  []string{},
+			Pipx:   []string{},
+			Bun:    []string{},
+			Skills: []string{},
 		},
 		Schedule: ScheduleConfig{
 			Times: []string{
@@ -197,6 +199,8 @@ func (c *Config) GetSkipList(manager string) []string {
 		return c.Skip.Pipx
 	case "bun":
 		return c.Skip.Bun
+	case "skills":
+		return c.Skip.Skills
 	default:
 		return nil
 	}
