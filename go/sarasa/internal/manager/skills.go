@@ -87,20 +87,14 @@ func (s *Skills) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, erro
 	log := logger.WithManager(s.Name())
 	result := &UpgradeResult{}
 
-	// Check what's outdated first (honors skip list via CheckOutdated)
-	outdated, err := s.CheckOutdated(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// Pre-check outdated skills for reporting (honors skip list).
+	// Note: CheckOutdated may return (nil, nil) on transient failures,
+	// so we don't use this to gate the update — only for result reporting.
+	outdated, _ := s.CheckOutdated(ctx)
 
 	if dryRun {
 		result.Skipped = outdated
 		log.Info("Would run npx skills update", "action", "upgrade", "dry_run", true)
-		return result, nil
-	}
-
-	// Nothing to upgrade after skip list filtering
-	if len(outdated) == 0 {
 		return result, nil
 	}
 
@@ -118,12 +112,12 @@ func (s *Skills) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, erro
 			"output", string(output),
 			"duration_ms", duration,
 		)
-		// Mark all as failed
 		result.Failed = outdated
 		return result, err
 	}
 
-	// Mark outdated packages as upgraded
+	// Populate result with pre-checked outdated packages so the
+	// TUI and plain renderers report what was upgraded.
 	result.Upgraded = outdated
 
 	log.Info("npx skills update completed",
