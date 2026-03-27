@@ -6,11 +6,12 @@ import (
 
 // Manager name constants.
 const (
-	ManagerBrew  = "brew"
-	ManagerNPM   = "npm"
-	ManagerVolta = "volta"
-	ManagerPipx  = "pipx"
-	ManagerBun   = "bun"
+	ManagerBrew   = "brew"
+	ManagerNPM    = "npm"
+	ManagerVolta  = "volta"
+	ManagerPipx   = "pipx"
+	ManagerBun    = "bun"
+	ManagerSkills = "skills"
 )
 
 // Package represents a package that can be upgraded.

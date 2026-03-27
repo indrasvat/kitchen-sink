@@ -20,6 +20,7 @@ const (
 	IconVolta   = "⚡"
 	IconPipx    = "🐍"
 	IconBun     = "🥟"
+	IconSkills  = "🧩"
 	IconPackage = "📦"
 )
 
@@ -36,6 +37,8 @@ func ManagerIcon(name string) string {
 		return IconPipx
 	case "bun":
 		return IconBun
+	case "skills":
+		return IconSkills
 	default:
 		return IconPackage
 	}
