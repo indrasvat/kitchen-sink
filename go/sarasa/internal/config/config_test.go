@@ -12,7 +12,7 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	// Check default managers
-	expectedManagers := []string{"brew", "volta", "pipx", "bun"}
+	expectedManagers := []string{"brew", "volta", "pipx", "bun", "skills"}
 	if len(cfg.Managers) != len(expectedManagers) {
 		t.Errorf("expected %d managers, got %d", len(expectedManagers), len(cfg.Managers))
 	}
@@ -56,7 +56,7 @@ func TestIsManagerEnabled(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	// Check enabled managers
-	for _, m := range []string{"brew", "volta", "pipx", "bun"} {
+	for _, m := range []string{"brew", "volta", "pipx", "bun", "skills"} {
 		if !cfg.IsManagerEnabled(m) {
 			t.Errorf("expected %s to be enabled", m)
 		}
@@ -65,9 +65,6 @@ func TestIsManagerEnabled(t *testing.T) {
 	// Check disabled managers
 	if cfg.IsManagerEnabled("npm") {
 		t.Error("expected npm to be disabled in default config")
-	}
-	if cfg.IsManagerEnabled("skills") {
-		t.Error("expected skills to be disabled in default config")
 	}
 
 	// Check unknown manager

@@ -23,7 +23,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "sarasa",
 	Short: "Automated global package manager upgrades",
-	Long: `Sarasa automates global package upgrades for brew, volta/npm, bun, and pipx
+	Long: `Sarasa automates global package upgrades for brew, volta/npm, bun, pipx, and skills
 with scheduled background execution via launchd.
 
 Uses volta when detected, otherwise falls back to npm.
