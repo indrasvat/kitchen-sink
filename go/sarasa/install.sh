@@ -131,7 +131,7 @@ show_banner() {
     _box_line "${BOLD}SARASA INSTALLER${RST}"
     _box_line ""
     _box_line "Automated global package upgrades for macOS"
-    _box_line "${DIM}brew  ·  volta  ·  npm  ·  pipx  ·  bun${RST}"
+    _box_line "${DIM}brew  ·  volta  ·  npm  ·  pipx  ·  bun  ·  skills${RST}"
     _box_line ""
     _box_rule "╰" "╯"
     printf "\n"
@@ -311,21 +311,119 @@ install_binary() {
     _done "Installed to ${BOLD}${INSTALL_PREFIX}/sarasa${RST}"
 }
 
+# ── Config check ───────────────────────────────────────────────
+# Detect available managers not in the user's existing config.
+# Uses `sarasa config suggest --json` for accurate availability checks.
+check_config_updates() {
+    local sarasa_bin="${INSTALL_PREFIX}/sarasa"
+    local config_path
+    config_path="${HOME}/.config/sarasa/config.toml"
+
+    # Only relevant if a config already exists (upgrade scenario)
+    if [ ! -f "$config_path" ]; then
+        return 1
+    fi
+
+    # Run suggest and capture JSON
+    local suggest_json
+    suggest_json="$("$sarasa_bin" config suggest --json 2>/dev/null)" || return 1
+
+    # Extract missing managers (lightweight JSON parse — no jq dependency).
+    # Collapse JSON to one line, then extract array body between "missing": [ ... ]
+    local missing=""
+    local collapsed
+    collapsed="$(printf '%s' "$suggest_json" | tr -d '\n')"
+
+    # Bail early if "missing": null or no array
+    if printf '%s' "$collapsed" | grep -q '"missing":[[:space:]]*\['; then
+        local arr_body
+        arr_body="$(printf '%s' "$collapsed" \
+            | sed -E 's/.*"missing":[[:space:]]*\[//;s/\].*//')"
+        missing="$(printf '%s' "$arr_body" \
+            | grep -o '"[a-zA-Z_-]*"' \
+            | tr -d '"' \
+            | tr '\n' ' ')"
+        missing="${missing% }"  # trim trailing space
+    fi
+
+    if [ -z "$missing" ]; then
+        return 1
+    fi
+
+    # Show hint box
+    printf "\n"
+    _box_rule "╭" "╮"
+    _box_line ""
+    _box_line "${BYEL}!${RST}  ${BOLD}New managers available${RST}"
+    _box_line ""
+    _box_line "Your config is missing managers that are"
+    _box_line "now available on this system:"
+    _box_line ""
+    for mgr in $missing; do
+        _box_line "  ${BCYN}+${RST}  ${BOLD}${mgr}${RST}"
+    done
+    _box_line ""
+    # Shorten config path for display (replace $HOME with ~)
+    local display_path="${config_path/#$HOME/\~}"
+    _box_line "Run ${BOLD}sarasa init --force${RST} to add them,"
+    _box_line "or edit ${DIM}${display_path}${RST}"
+    _box_line ""
+    _box_rule "╰" "╯"
+
+    # Offer interactive reconfigure
+    if [ -t 0 ] && [ -t 1 ] && [ "$RUN_INIT" = "true" ]; then
+        printf "\n"
+        printf "  %sReconfigure now?%s [Y/n] " "$BOLD" "$RST"
+        local reply
+        read -r reply
+        case "$reply" in
+            [Nn]*)
+                printf "  %s Keeping existing config.\n" "$DIM"
+                return 0
+                ;;
+            *)
+                printf "\n"
+                "$sarasa_bin" init --force
+                return 0
+                ;;
+        esac
+    fi
+
+    return 0
+}
+
 # ── Post-install ────────────────────────────────────────────────
 post_install() {
+    local is_upgrade="false"
+    if [ -f "${HOME}/.config/sarasa/config.toml" ]; then
+        is_upgrade="true"
+    fi
+
     printf "\n"
     _box_rule "╭" "╮"
     _box_line ""
     _box_line "${BGRN}OK${RST} ${BOLD}Installation complete!${RST}"
     _box_line ""
 
-    if [ "$RUN_INIT" = "true" ] && [ -t 0 ] && [ -t 1 ]; then
+    if [ "$is_upgrade" = "true" ]; then
+        # Upgrade path: check for stale config
+        _box_line "Next steps:"
+        _box_line "  ${BOLD}sarasa status${RST}   -- check outdated packages"
+        _box_line "  ${BOLD}sarasa run${RST}      -- upgrade everything"
+        _box_line ""
+        _box_rule "╰" "╯"
+
+        # Show config hint if new managers are available
+        check_config_updates || true
+    elif [ "$RUN_INIT" = "true" ] && [ -t 0 ] && [ -t 1 ]; then
+        # Fresh install, interactive: run init wizard
         _box_line "Running ${BOLD}sarasa init${RST} to configure..."
         _box_line ""
         _box_rule "╰" "╯"
         printf "\n"
         "${INSTALL_PREFIX}/sarasa" init
     else
+        # Fresh install, non-interactive: show next steps
         _box_line "Next steps:"
         _box_line "  ${BOLD}sarasa init${RST}     -- interactive setup"
         _box_line "  ${BOLD}sarasa status${RST}   -- check outdated packages"
@@ -357,4 +455,8 @@ main() {
     post_install
 }
 
-main
+# Guard: only run main when executed directly, not when sourced.
+# This allows test harnesses to source the functions independently.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main
+fi
