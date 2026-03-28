@@ -46,6 +46,22 @@ func runSuggest(_ *cobra.Command, _ []string) error {
 	cfg := GetConfig()
 	opts := &manager.Options{}
 
+	// An empty managers list means "all managers enabled" — nothing to suggest.
+	if len(cfg.Managers) == 0 {
+		if suggestJSON {
+			out := SuggestOutput{
+				ConfigPath: configPath(),
+				Configured: cfg.Managers,
+			}
+			data, err := json.MarshalIndent(out, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(data))
+		}
+		return nil
+	}
+
 	// Build set of currently configured managers
 	configured := make(map[string]bool)
 	for _, m := range cfg.Managers {

@@ -457,6 +457,8 @@ main() {
 
 # Guard: only run main when executed directly, not when sourced.
 # This allows test harnesses to source the functions independently.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# When piped via stdin (curl | bash), BASH_SOURCE[0] is empty and $0 is
+# the shell name, so we also check for that case.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]] || [[ -z "${BASH_SOURCE[0]}" ]]; then
     main
 fi
