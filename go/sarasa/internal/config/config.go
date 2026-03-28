@@ -59,7 +59,7 @@ type VoltaConfig struct {
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
 	return &Config{
-		Managers: []string{"brew", "volta", "pipx", "bun"},
+		Managers: []string{"brew", "volta", "pipx", "bun", "skills"},
 		Skip: SkipConfig{
 			Brew:   []string{},
 			NPM:    []string{},
