@@ -33,6 +33,7 @@ Usage:
 
 import asyncio
 import subprocess
+from pathlib import Path
 import iterm2
 
 
@@ -151,7 +152,8 @@ def verify_box_alignment(lines: list[str], label: str) -> bool:
     return left_ok and right_ok
 
 
-SCRIPT = "/Users/indrasvat/code/github.com/indrasvat-kitchen-sink/go/sarasa/install.sh"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = str(REPO_ROOT / "go/sarasa/install.sh")
 TMPPREFIX = "/tmp/sarasa-vis-test"
 
 

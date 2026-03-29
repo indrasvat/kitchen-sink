@@ -43,11 +43,13 @@ import subprocess
 import os
 import json
 import time
+from pathlib import Path
 from datetime import datetime
 
 SCREENSHOT_DIR = "./screenshots"
 TIMEOUT_SECONDS = 10.0
-PROJECT_DIR = "/Users/indrasvat/code/github.com/indrasvat-kitchen-sink"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_DIR = str(REPO_ROOT)
 TEST_OUTPUT = "/tmp/yantra-test-output.json"
 
 results = {

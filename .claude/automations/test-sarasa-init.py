@@ -39,6 +39,7 @@ Usage:
 
 import asyncio
 import subprocess
+from pathlib import Path
 import iterm2
 
 
@@ -110,6 +111,9 @@ def print_summary():
     return 0 if results["failed"] == 0 else 1
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 async def main(connection):
     app = await iterm2.async_get_app(connection)
     window = app.current_terminal_window
@@ -125,7 +129,7 @@ async def main(connection):
     try:
         # Ensure we're in the right directory
         await session.async_send_text(
-            "cd /Users/indrasvat/code/github.com/indrasvat-kitchen-sink/go/sarasa\n"
+            f"cd {REPO_ROOT / 'go/sarasa'}\n"
         )
         await asyncio.sleep(0.3)
 
