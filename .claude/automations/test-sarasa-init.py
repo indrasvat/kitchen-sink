@@ -112,6 +112,8 @@ def print_summary():
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SARASA_DIR = REPO_ROOT / "go" / "sarasa"
+SARASA_BIN = "/tmp/sarasa-test"
 
 
 async def main(connection):
@@ -121,6 +123,18 @@ async def main(connection):
         print("ERROR: No iTerm2 window found")
         return
 
+    # Build sarasa binary
+    print("  Building sarasa...")
+    build = subprocess.run(
+        ["go", "build", "-o", SARASA_BIN, "."],
+        cwd=str(SARASA_DIR),
+        capture_output=True, text=True,
+    )
+    if build.returncode != 0:
+        print(f"  BUILD FAILED:\n{build.stderr}")
+        return
+    print("  Build OK")
+
     # Create a new tab for testing
     tab = await window.async_create_tab()
     session = tab.current_session
@@ -129,13 +143,13 @@ async def main(connection):
     try:
         # Ensure we're in the right directory
         await session.async_send_text(
-            f"cd {REPO_ROOT / 'go/sarasa'}\n"
+            f"cd {SARASA_DIR}\n"
         )
         await asyncio.sleep(0.3)
 
         # -- Test 1: Launch init wizard --
         print("\n  Testing sarasa init --force TUI wizard\n")
-        await session.async_send_text("/tmp/sarasa-test init --force\n")
+        await session.async_send_text(f"{SARASA_BIN} init --force\n")
         await asyncio.sleep(1.0)
 
         found = await screen_contains(session, "SARASA INIT")
