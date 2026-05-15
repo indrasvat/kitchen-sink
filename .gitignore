@@ -36,6 +36,10 @@ ENV/
 .claude/screenshots/
 .claude/automations/screenshots/
 
+# Agent tooling outputs
+.codemap/
+.githuman/
+
 # Logs
 *.log
 /logs/
