@@ -189,6 +189,9 @@ func (c *Custom) Cleanup(ctx context.Context) error {
 	}
 
 	for _, tool := range c.opts.Config.Custom.Tools {
+		if tool.Name == "" || c.opts.ShouldSkip(tool.Name) || !customToolAvailable(tool) {
+			continue
+		}
 		if !hasAction(tool.Cleanup) {
 			continue
 		}

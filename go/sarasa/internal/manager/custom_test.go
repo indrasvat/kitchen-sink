@@ -128,6 +128,56 @@ func TestCustomUpgradeDryRunDoesNotRunAction(t *testing.T) {
 	}
 }
 
+func TestCustomCleanupRespectsSkipListAndAvailability(t *testing.T) {
+	tmpDir := t.TempDir()
+	skippedFile := filepath.Join(tmpDir, "skipped.txt")
+	missingFile := filepath.Join(tmpDir, "missing.txt")
+	activeFile := filepath.Join(tmpDir, "active.txt")
+
+	cfg := config.DefaultConfig()
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name: "skipped-tool",
+			Cleanup: config.CustomActionConfig{
+				Argv: []string{"sh", "-c", "printf skipped > \"$1\"", "sarasa-test", skippedFile},
+			},
+		},
+		{
+			Name:   "missing-tool",
+			Binary: "__sarasa_missing_binary__",
+			Cleanup: config.CustomActionConfig{
+				Argv: []string{"sh", "-c", "printf missing > \"$1\"", "sarasa-test", missingFile},
+			},
+		},
+		{
+			Name: "active-tool",
+			Cleanup: config.CustomActionConfig{
+				Argv: []string{"sh", "-c", "printf active > \"$1\"", "sarasa-test", activeFile},
+			},
+		},
+	}
+
+	opts := &Options{
+		Config:   cfg,
+		SkipList: []string{"skipped-tool"},
+	}
+	if err := NewCustom(opts).Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	if _, err := os.Stat(skippedFile); !os.IsNotExist(err) {
+		t.Fatalf("skipped cleanup ran, stat error: %v", err)
+	}
+	if _, err := os.Stat(missingFile); !os.IsNotExist(err) {
+		t.Fatalf("unavailable cleanup ran, stat error: %v", err)
+	}
+	if data, err := os.ReadFile(activeFile); err != nil {
+		t.Fatalf("active cleanup did not run: %v", err)
+	} else if string(data) != "active" {
+		t.Fatalf("active cleanup wrote %q, want active", data)
+	}
+}
+
 func TestVersionGreater(t *testing.T) {
 	tests := []struct {
 		latest  string
