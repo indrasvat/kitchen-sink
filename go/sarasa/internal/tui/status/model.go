@@ -441,11 +441,10 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 	var b strings.Builder
 
 	// Manager header with icon OUTSIDE the panel (with proper margin)
-	icon := ui.ManagerIcon(name)
 	titleStyle := ui.GetManagerTitleStyle(name)
 	title := titleStyle.Render(strings.ToUpper(name))
 	headerStyle := lipgloss.NewStyle().MarginLeft(2)
-	b.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", icon, title)) + "\n")
+	b.WriteString(headerStyle.Render(ui.ManagerIconLabelPrefix(name)+title) + "\n")
 
 	// Panel content (no emoji inside)
 	var content strings.Builder
@@ -498,11 +497,10 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 	var b strings.Builder
 
 	// Manager header with icon OUTSIDE the panel (with proper margin)
-	icon := ui.ManagerIcon(name)
 	titleStyle := ui.GetManagerTitleStyle(name)
 	title := titleStyle.Render(strings.ToUpper(name))
 	headerStyle := lipgloss.NewStyle().MarginLeft(2)
-	b.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", icon, title)) + "\n")
+	b.WriteString(headerStyle.Render(ui.ManagerIconLabelPrefix(name)+title) + "\n")
 
 	var content strings.Builder
 
