@@ -59,7 +59,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 
 	// Detect available managers
-	opts := &manager.Options{}
+	opts := &manager.Options{Config: GetConfig()}
 	available := manager.Available(opts)
 	var availNames []string
 	for _, m := range available {

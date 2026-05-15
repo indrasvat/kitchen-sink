@@ -238,7 +238,7 @@ func parseSkillsCheckOutput(output string) (packages []Package, unparsed []strin
 	if pendingName != "" {
 		packages = append(packages, Package{
 			Name:    pendingName,
-			Current: "unknown",
+			Current: customUnknown,
 			Latest:  "update available",
 			IsMajor: false,
 		})

@@ -16,6 +16,7 @@ type Config struct {
 	Brew     BrewConfig     `toml:"brew"`
 	NPM      NPMConfig      `toml:"npm"`
 	Volta    VoltaConfig    `toml:"volta"`
+	Custom   CustomConfig   `toml:"custom"`
 }
 
 // SkipConfig holds packages to skip per manager.
@@ -26,6 +27,7 @@ type SkipConfig struct {
 	Pipx   []string `toml:"pipx"`
 	Bun    []string `toml:"bun"`
 	Skills []string `toml:"skills"`
+	Custom []string `toml:"custom"`
 }
 
 // ScheduleConfig holds scheduling configuration.
@@ -55,6 +57,70 @@ type VoltaConfig struct {
 	SkipMajor bool `toml:"skip_major"`
 }
 
+// CustomConfig holds user-defined tool upgrade recipes.
+type CustomConfig struct {
+	StateDir       string             `toml:"state_dir"`
+	DefaultTimeout string             `toml:"default_timeout"`
+	Tools          []CustomToolConfig `toml:"tools"`
+}
+
+// CustomToolConfig describes one user-defined upgradeable tool.
+type CustomToolConfig struct {
+	Name           string               `toml:"name"`
+	Binary         string               `toml:"binary"`
+	Description    string               `toml:"description"`
+	Current        CustomProbeConfig    `toml:"current"`
+	Latest         CustomLatestConfig   `toml:"latest"`
+	Outdated       CustomOutdatedConfig `toml:"outdated"`
+	Upgrade        CustomActionConfig   `toml:"upgrade"`
+	Verify         CustomProbeConfig    `toml:"verify"`
+	Cleanup        CustomActionConfig   `toml:"cleanup"`
+	Timeout        string               `toml:"timeout"`
+	AllowUnchanged bool                 `toml:"allow_unchanged"`
+}
+
+// CustomProbeConfig extracts a version or status value from a command.
+type CustomProbeConfig struct {
+	Argv    []string          `toml:"argv"`
+	Shell   string            `toml:"shell"`
+	Cwd     string            `toml:"cwd"`
+	Env     map[string]string `toml:"env"`
+	Timeout string            `toml:"timeout"`
+	Regex   string            `toml:"regex"`
+}
+
+// CustomLatestConfig defines how sarasa discovers the latest available version.
+type CustomLatestConfig struct {
+	Mode          string            `toml:"mode"`
+	Value         string            `toml:"value"`
+	GitHubRelease string            `toml:"github_release"`
+	Argv          []string          `toml:"argv"`
+	Shell         string            `toml:"shell"`
+	Cwd           string            `toml:"cwd"`
+	Env           map[string]string `toml:"env"`
+	Timeout       string            `toml:"timeout"`
+	Regex         string            `toml:"regex"`
+}
+
+// CustomOutdatedConfig controls how sarasa decides whether a custom tool is stale.
+type CustomOutdatedConfig struct {
+	Mode    string            `toml:"mode"`
+	Argv    []string          `toml:"argv"`
+	Shell   string            `toml:"shell"`
+	Cwd     string            `toml:"cwd"`
+	Env     map[string]string `toml:"env"`
+	Timeout string            `toml:"timeout"`
+}
+
+// CustomActionConfig describes a command sarasa may execute for a custom tool.
+type CustomActionConfig struct {
+	Argv    []string          `toml:"argv"`
+	Shell   string            `toml:"shell"`
+	Cwd     string            `toml:"cwd"`
+	Env     map[string]string `toml:"env"`
+	Timeout string            `toml:"timeout"`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
@@ -67,6 +133,7 @@ func DefaultConfig() *Config {
 			Pipx:   []string{},
 			Bun:    []string{},
 			Skills: []string{},
+			Custom: []string{},
 		},
 		Schedule: ScheduleConfig{
 			Times: []string{
@@ -88,6 +155,11 @@ func DefaultConfig() *Config {
 		},
 		Volta: VoltaConfig{
 			SkipMajor: false,
+		},
+		Custom: CustomConfig{
+			StateDir:       filepath.Join(homeDir, ".local", "state", "sarasa", "custom"),
+			DefaultTimeout: "10m",
+			Tools:          []CustomToolConfig{},
 		},
 	}
 }
@@ -142,6 +214,7 @@ func LoadFrom(path string) (*Config, error) {
 		homeDir, _ := os.UserHomeDir()
 		cfg.Logging.Dir = filepath.Join(homeDir, cfg.Logging.Dir[1:])
 	}
+	expandCustomPaths(cfg)
 
 	return cfg, nil
 }
@@ -201,6 +274,8 @@ func (c *Config) GetSkipList(manager string) []string {
 		return c.Skip.Bun
 	case "skills":
 		return c.Skip.Skills
+	case "custom":
+		return c.Skip.Custom
 	default:
 		return nil
 	}
@@ -215,4 +290,31 @@ func (c *Config) ShouldSkip(manager, pkg string) bool {
 		}
 	}
 	return false
+}
+
+func expandCustomPaths(cfg *Config) {
+	cfg.Custom.StateDir = expandHome(cfg.Custom.StateDir)
+	for i := range cfg.Custom.Tools {
+		tool := &cfg.Custom.Tools[i]
+		tool.Current.Cwd = expandHome(tool.Current.Cwd)
+		tool.Latest.Cwd = expandHome(tool.Latest.Cwd)
+		tool.Outdated.Cwd = expandHome(tool.Outdated.Cwd)
+		tool.Upgrade.Cwd = expandHome(tool.Upgrade.Cwd)
+		tool.Verify.Cwd = expandHome(tool.Verify.Cwd)
+		tool.Cleanup.Cwd = expandHome(tool.Cleanup.Cwd)
+	}
+}
+
+func expandHome(path string) string {
+	if len(path) == 0 || path[0] != '~' {
+		return path
+	}
+	homeDir, _ := os.UserHomeDir()
+	if len(path) == 1 {
+		return homeDir
+	}
+	if path[1] == '/' {
+		return filepath.Join(homeDir, path[2:])
+	}
+	return path
 }

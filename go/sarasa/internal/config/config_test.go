@@ -50,6 +50,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Volta.SkipMajor {
 		t.Error("expected Volta.SkipMajor=false")
 	}
+	if cfg.Custom.DefaultTimeout != "10m" {
+		t.Errorf("expected Custom.DefaultTimeout=10m, got %s", cfg.Custom.DefaultTimeout)
+	}
+	if cfg.Custom.StateDir == "" {
+		t.Error("expected Custom.StateDir to be set")
+	}
 }
 
 func TestIsManagerEnabled(t *testing.T) {
@@ -93,6 +99,7 @@ func TestGetSkipList(t *testing.T) {
 	cfg.Skip.Pipx = []string{"pipx-pkg"}
 	cfg.Skip.Bun = []string{"bun-pkg"}
 	cfg.Skip.Skills = []string{"skills-pkg"}
+	cfg.Skip.Custom = []string{"custom-pkg"}
 
 	tests := []struct {
 		manager  string
@@ -104,6 +111,7 @@ func TestGetSkipList(t *testing.T) {
 		{"pipx", []string{"pipx-pkg"}},
 		{"bun", []string{"bun-pkg"}},
 		{"skills", []string{"skills-pkg"}},
+		{"custom", []string{"custom-pkg"}},
 		{"unknown", nil},
 	}
 
@@ -120,6 +128,65 @@ func TestGetSkipList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadFrom_CustomTools(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+managers = ["custom"]
+
+[skip]
+custom = ["skip-me"]
+
+[custom]
+state_dir = "~/Library/Application Support/sarasa/custom-state"
+default_timeout = "30s"
+
+[[custom.tools]]
+name = "demo"
+binary = "demo"
+timeout = "1m"
+allow_unchanged = true
+current = { argv = ["demo", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
+latest = { github_release = "indrasvat/demo" }
+outdated = { mode = "always" }
+upgrade = { shell = "curl -fsSL https://example.invalid/install.sh | VERSION=${latest} sh" }
+verify = { argv = ["demo", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
+`
+
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if len(cfg.Custom.Tools) != 1 {
+		t.Fatalf("expected 1 custom tool, got %d", len(cfg.Custom.Tools))
+	}
+	tool := cfg.Custom.Tools[0]
+	if tool.Name != "demo" {
+		t.Errorf("tool.Name = %q, want demo", tool.Name)
+	}
+	if !tool.AllowUnchanged {
+		t.Error("expected allow_unchanged=true")
+	}
+	if tool.Latest.GitHubRelease != "indrasvat/demo" {
+		t.Errorf("github_release = %q", tool.Latest.GitHubRelease)
+	}
+	if tool.Outdated.Mode != "always" {
+		t.Errorf("outdated mode = %q", tool.Outdated.Mode)
+	}
+	if cfg.Custom.StateDir == "" || cfg.Custom.StateDir[0] == '~' {
+		t.Errorf("expected expanded custom state dir, got %q", cfg.Custom.StateDir)
+	}
+	if !cfg.ShouldSkip("custom", "skip-me") {
+		t.Error("expected custom skip list to apply")
 	}
 }
 

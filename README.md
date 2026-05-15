@@ -154,7 +154,7 @@ uv run python/games/space-war.py
 
 [`sarasa`](go/sarasa/) is a CLI tool for automated global package manager upgrades with scheduled background execution via launchd.
 
-**Supported managers:** 🍺 brew · ⚡ volta · 📦 npm · 🐍 pipx · 🥟 bun · 🔧 skills (uses volta when detected, otherwise npm)
+**Supported managers:** 🍺 brew · ⚡ volta · 📦 npm · 🐍 pipx · 🥟 bun · 🧩 skills · 🛠 custom tools
 
 | Command | Description |
 |---------|-------------|
@@ -170,6 +170,7 @@ uv run python/games/space-war.py
 - Interactive TUI with colored output and progress indicators
 - One-command install on new machines (no sudo required)
 - Per-manager skip lists and major version upgrade control
+- Config-driven custom tool recipes for direct installers, local repos, and self-updaters
 - Structured JSON logging with 30-day retention
 - Graceful degradation to plain text when piped
 
@@ -203,15 +204,30 @@ sarasa logs
 **Configuration:** `~/.config/sarasa/config.toml`
 
 ```toml
-managers = ["brew", "volta", "npm", "pipx", "bun", "skills"]
+managers = ["brew", "volta", "npm", "pipx", "bun", "skills", "custom"]
 
 [skip]
 brew = ["postgresql@14"]  # Packages to skip
 npm = []
+custom = ["experimental-tool"]
 
 [schedule]
 times = ["08:00", "14:00", "22:00"]
+
+[custom]
+state_dir = "~/.local/state/sarasa/custom"
+default_timeout = "10m"
+
+[[custom.tools]]
+name = "nidhi"
+binary = "nidhi"
+current = { argv = ["nidhi", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
+latest = { github_release = "indrasvat/nidhi" }
+upgrade = { shell = "curl -sSfL https://raw.githubusercontent.com/indrasvat/nidhi/main/install.sh | bash -s -- --version ${latest} --dir ~/.local/bin" }
+verify = { argv = ["nidhi", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 ```
+
+See [`go/sarasa/README.md`](go/sarasa/README.md) for custom recipe patterns, self-updater examples, and verification notes.
 
 ## Guides
 

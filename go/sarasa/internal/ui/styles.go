@@ -21,6 +21,7 @@ var (
 	ColorPipx   = lipgloss.AdaptiveColor{Light: "#3776AB", Dark: "#4B8BBE"} // Blue
 	ColorBun    = lipgloss.AdaptiveColor{Light: "#D2B48C", Dark: "#FBDF9D"} // Tan
 	ColorSkills = lipgloss.AdaptiveColor{Light: "#008080", Dark: "#00CED1"} // Teal
+	ColorCustom = lipgloss.AdaptiveColor{Light: "#52616B", Dark: "#A7BBC7"} // Steel
 )
 
 // ManagerColor returns the accent color for a given manager name.
@@ -38,6 +39,8 @@ func ManagerColor(name string) lipgloss.AdaptiveColor {
 		return ColorBun
 	case "skills":
 		return ColorSkills
+	case "custom":
+		return ColorCustom
 	default:
 		return ColorPrimary
 	}
@@ -82,6 +85,9 @@ var (
 	StyleVersionMajor = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(ColorWarning)
+
+	StyleMethodTag = lipgloss.NewStyle().
+			Foreground(ColorMuted)
 
 	StyleArrow = lipgloss.NewStyle().
 			Foreground(ColorMuted)

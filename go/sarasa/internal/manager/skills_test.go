@@ -172,7 +172,7 @@ Run npx skills update to update all skills`
 	if packages[0].Name != "orphan-skill" {
 		t.Errorf("expected name=orphan-skill, got %s", packages[0].Name)
 	}
-	if packages[0].Current != "unknown" {
+	if packages[0].Current != customUnknown {
 		t.Errorf("expected current=unknown for orphan, got %s", packages[0].Current)
 	}
 }

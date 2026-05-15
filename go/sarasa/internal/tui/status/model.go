@@ -370,6 +370,9 @@ func (m Model) View() string {
 	totalErrors := 0
 
 	panelWidth := 45
+	if m.width >= 90 {
+		panelWidth = min(76, m.width-6)
+	}
 	if m.width > 0 && m.width < 60 {
 		panelWidth = m.width - 6
 	}
@@ -471,10 +474,14 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 			if pkg.IsMajor {
 				majorTag = " " + ui.StyleVersionMajor.Render("[MAJOR]")
 			}
+			methodTag := ""
+			if pkg.Method != "" {
+				methodTag = " " + ui.StyleMethodTag.Render("· "+pkg.Method)
+			}
 
 			mgrColor := ui.ManagerColor(name)
 			triangle := lipgloss.NewStyle().Foreground(mgrColor).Render(ui.IconTriangle)
-			content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s", triangle, pkgName, current, arrow, latest, majorTag))
+			content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s", triangle, pkgName, current, arrow, latest, majorTag, methodTag))
 			if i < len(status.Outdated)-1 {
 				content.WriteString("\n")
 			}
@@ -540,8 +547,12 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 				if pkg.Package.IsMajor && pkg.Status == "skipped" {
 					majorTag = " " + ui.StyleVersionMajor.Render("[MAJOR]")
 				}
+				methodTag := ""
+				if pkg.Package.Method != "" {
+					methodTag = " " + ui.StyleMethodTag.Render("· "+pkg.Package.Method)
+				}
 
-				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s", statusIcon, pkgName, current, arrow, latest, majorTag))
+				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag))
 				if i < len(result.Packages)-1 {
 					content.WriteString("\n")
 				}
