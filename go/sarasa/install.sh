@@ -297,16 +297,27 @@ install_binary() {
 
     # Check for existing installation
     if [ -f "${INSTALL_PREFIX}/sarasa" ]; then
-        local existing_ver
-        existing_ver="$("${INSTALL_PREFIX}/sarasa" version 2>/dev/null | head -1 || echo "unknown")"
-        _info "Replacing existing: ${DIM}${existing_ver}${RST}"
+        _info "Replacing existing: ${DIM}${INSTALL_PREFIX}/sarasa${RST}"
     fi
 
-    cp "$src" "${INSTALL_PREFIX}/sarasa" || {
-        _fail "Cannot copy to ${INSTALL_PREFIX}/sarasa"
+    local tmp_target
+    tmp_target="$(mktemp "${INSTALL_PREFIX}/.sarasa.XXXXXX")" || {
+        _fail "Cannot create temporary file in ${INSTALL_PREFIX}"
         return 1
     }
-    chmod +x "${INSTALL_PREFIX}/sarasa" || true
+
+    cp "$src" "$tmp_target" || {
+        rm -f "$tmp_target"
+        _fail "Cannot copy to ${tmp_target}"
+        return 1
+    }
+    chmod +x "$tmp_target" || true
+
+    mv -f "$tmp_target" "${INSTALL_PREFIX}/sarasa" || {
+        rm -f "$tmp_target"
+        _fail "Cannot move into ${INSTALL_PREFIX}/sarasa"
+        return 1
+    }
 
     _done "Installed to ${BOLD}${INSTALL_PREFIX}/sarasa${RST}"
 }
