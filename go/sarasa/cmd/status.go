@@ -59,6 +59,7 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	opts := &manager.Options{
 		SkipMajor: cfg.NPM.SkipMajor,
 		Greedy:    cfg.Brew.Greedy,
+		Config:    cfg,
 	}
 
 	// Determine which managers to check
@@ -182,6 +183,8 @@ func runStatusPlain(managerNames []string, opts *manager.Options, cfg *configWra
 			return brightMagenta
 		case "skills":
 			return cyan
+		case "custom":
+			return brightCyan
 		default:
 			return brightCyan
 		}
@@ -241,13 +244,18 @@ func runStatusPlain(managerNames []string, opts *manager.Options, cfg *configWra
 			if pkg.IsMajor {
 				majorTag = " " + c(bold+brightYellow, "[MAJOR]")
 			}
-			fmt.Printf("      %s %s  %s %s %s%s\n",
+			methodTag := ""
+			if pkg.Method != "" {
+				methodTag = " " + c(dim, "· "+pkg.Method)
+			}
+			fmt.Printf("      %s %s  %s %s %s%s%s\n",
 				c(mColor, ui.IconTriangle),
 				c(bold+white, pkg.Name),
 				c(dim, pkg.Current),
 				c(dim, ui.IconArrow),
 				c(brightGreen, pkg.Latest),
 				majorTag,
+				methodTag,
 			)
 		}
 		fmt.Println()

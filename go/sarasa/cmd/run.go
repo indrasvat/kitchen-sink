@@ -56,6 +56,7 @@ func runRun(_ *cobra.Command, _ []string) error {
 		SkipMajor:   runNoMajor || cfg.NPM.SkipMajor,
 		SkipCleanup: runSkipCleanup,
 		Greedy:      cfg.Brew.Greedy,
+		Config:      cfg,
 	}
 
 	// Determine which managers to run
@@ -180,6 +181,8 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 			return brightMagenta
 		case manager.ManagerSkills:
 			return cyan
+		case manager.ManagerCustom:
+			return brightCyan
 		default:
 			return brightCyan
 		}
@@ -242,12 +245,17 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 		if len(result.Upgraded) > 0 {
 			hasOutput = true
 			for _, pkg := range result.Upgraded {
-				fmt.Printf("    %s %s  %s %s %s\n",
+				methodTag := ""
+				if pkg.Method != "" {
+					methodTag = " " + c(dim, "· "+pkg.Method)
+				}
+				fmt.Printf("    %s %s  %s %s %s%s\n",
 					c(green, ui.IconCheck),
 					c(bold+white, pkg.Name),
 					c(dim, pkg.Current),
 					c(dim, ui.IconArrow),
 					c(brightGreen, pkg.Latest),
+					methodTag,
 				)
 			}
 		}
@@ -270,13 +278,18 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 				if pkg.IsMajor {
 					majorTag = " " + c(bold+brightYellow, "[MAJOR]")
 				}
-				fmt.Printf("    %s %s  %s %s %s%s\n",
+				methodTag := ""
+				if pkg.Method != "" {
+					methodTag = " " + c(dim, "· "+pkg.Method)
+				}
+				fmt.Printf("    %s %s  %s %s %s%s%s\n",
 					c(brightMagenta, ui.IconTriangle),
 					c(bold+white, pkg.Name),
 					c(dim, pkg.Current),
 					c(dim, ui.IconArrow),
 					c(brightMagenta, pkg.Latest),
 					majorTag,
+					methodTag,
 				)
 			}
 		}

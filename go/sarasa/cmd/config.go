@@ -44,7 +44,7 @@ func init() {
 
 func runSuggest(_ *cobra.Command, _ []string) error {
 	cfg := GetConfig()
-	opts := &manager.Options{}
+	opts := &manager.Options{Config: cfg}
 
 	// An empty managers list means "all managers enabled" — nothing to suggest.
 	if len(cfg.Managers) == 0 {

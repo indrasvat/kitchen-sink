@@ -1,7 +1,7 @@
 #!/bin/bash
 # ╭──────────────────────────────────────────────────────────────╮
 # │  Sarasa Installer                                            │
-# │  One-command install for automated package manager upgrades  │
+# │  One-command install for automated package/tool upgrades     │
 # │  Safe · No sudo required · Cleans up after itself            │
 # ╰──────────────────────────────────────────────────────────────╯
 #
@@ -12,7 +12,7 @@
 #   bash install.sh --no-init           # skip interactive setup
 #   bash install.sh --check             # check prerequisites only
 #
-# Prerequisites: git, go (1.22+)
+# Prerequisites: git, go (1.25+)
 # Installs to: ~/.local/bin/sarasa (no sudo needed)
 
 set -uo pipefail
@@ -130,8 +130,8 @@ show_banner() {
     _box_line ""
     _box_line "${BOLD}SARASA INSTALLER${RST}"
     _box_line ""
-    _box_line "Automated global package upgrades for macOS"
-    _box_line "${DIM}brew  ·  volta  ·  npm  ·  pipx  ·  bun  ·  skills${RST}"
+    _box_line "Automated global package and tool upgrades"
+    _box_line "${DIM}brew · volta · npm · pipx · bun · skills · custom${RST}"
     _box_line ""
     _box_rule "╰" "╯"
     printf "\n"

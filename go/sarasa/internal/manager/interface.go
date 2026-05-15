@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+
+	"github.com/indrasvat/sarasa/internal/config"
 )
 
 // Manager name constants.
@@ -12,6 +14,7 @@ const (
 	ManagerPipx   = "pipx"
 	ManagerBun    = "bun"
 	ManagerSkills = "skills"
+	ManagerCustom = "custom"
 )
 
 // Package represents a package that can be upgraded.
@@ -20,6 +23,7 @@ type Package struct {
 	Current string `json:"current"`
 	Latest  string `json:"latest"`
 	IsMajor bool   `json:"is_major,omitempty"`
+	Method  string `json:"method,omitempty"`
 }
 
 // UpgradeResult holds the results of an upgrade operation.
@@ -58,6 +62,7 @@ type Options struct {
 	SkipCleanup bool
 	SkipList    []string
 	Greedy      bool // For brew casks with auto_updates
+	Config      *config.Config
 }
 
 // ShouldSkip checks if a package should be skipped.
