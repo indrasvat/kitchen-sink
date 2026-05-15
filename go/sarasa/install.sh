@@ -459,6 +459,7 @@ main() {
 # This allows test harnesses to source the functions independently.
 # When piped via stdin (curl | bash), BASH_SOURCE[0] is empty and $0 is
 # the shell name, so we also check for that case.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]] || [[ -z "${BASH_SOURCE[0]}" ]]; then
+script_source="${BASH_SOURCE[0]:-}"
+if [[ "$script_source" == "${0}" ]] || [[ -z "$script_source" ]]; then
     main
 fi
