@@ -236,6 +236,7 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 				"error", err.Error(),
 			)
 			fmt.Printf("    %s %s\n\n", c(red, ui.IconCross), c(red, err.Error()))
+			totalFailed++
 			continue
 		}
 
@@ -325,9 +326,13 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 	var summaryParts []string
 
 	if runDryRun {
+		if totalFailed > 0 {
+			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", totalFailed)))
+		}
 		if totalSkipped > 0 {
 			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d to upgrade", totalSkipped)))
-		} else {
+		}
+		if totalFailed == 0 && totalSkipped == 0 {
 			summaryParts = append(summaryParts, c(green, "All up to date"))
 		}
 	} else {

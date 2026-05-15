@@ -221,13 +221,17 @@ default_timeout = "10m"
 [[custom.tools]]
 name = "nidhi"
 binary = "nidhi"
+missing = "install"  # bootstrap if absent; default is "skip"
 current = { argv = ["nidhi", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 latest = { github_release = "indrasvat/nidhi" }
 upgrade = { shell = "curl -sSfL https://raw.githubusercontent.com/indrasvat/nidhi/main/install.sh | bash -s -- --version ${latest} --dir ~/.local/bin" }
 verify = { argv = ["nidhi", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 ```
 
-See [`go/sarasa/README.md`](go/sarasa/README.md) for custom recipe patterns, self-updater examples, and verification notes.
+`latest.github_release` uses `GITHUB_TOKEN`/`GH_TOKEN` when set and falls back
+to authenticated `gh api` after GitHub 401/403 responses. See
+[`go/sarasa/README.md`](go/sarasa/README.md) for custom recipe patterns,
+self-updater examples, and verification notes.
 
 ## Guides
 

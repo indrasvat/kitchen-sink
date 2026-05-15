@@ -204,6 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			result.Status = "error"
 			result.Error = msg.err
+			m.totalFailed++
 		} else {
 			result.Status = "done"
 			// Convert result packages to status
@@ -377,9 +378,13 @@ func (m Model) renderSummary() string {
 	totalDuration := time.Since(m.startTime)
 
 	if m.dryRun {
+		if m.totalFailed > 0 {
+			parts = append(parts, ui.StyleError.Render(fmt.Sprintf("%d failed", m.totalFailed)))
+		}
 		if m.totalSkipped > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#8B008B", Dark: "#DA70D6"}).Render(fmt.Sprintf("%d to upgrade", m.totalSkipped)))
-		} else {
+		}
+		if m.totalFailed == 0 && m.totalSkipped == 0 {
 			parts = append(parts, ui.StyleSuccess.Render("All up to date"))
 		}
 	} else {

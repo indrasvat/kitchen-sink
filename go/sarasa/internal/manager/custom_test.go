@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/indrasvat/sarasa/internal/config"
@@ -125,6 +128,211 @@ func TestCustomUpgradeDryRunDoesNotRunAction(t *testing.T) {
 	}
 	if string(data) != "1.0.0" {
 		t.Errorf("dry-run changed version file to %q", data)
+	}
+}
+
+func TestCustomMissingPolicySkipByDefault(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "missing-skip",
+			Binary:  "__sarasa_missing_binary__",
+			Latest:  config.CustomLatestConfig{Value: "1.0.0"},
+			Upgrade: config.CustomActionConfig{Shell: "printf should-not-run"},
+		},
+	}
+
+	got, err := NewCustom(&Options{Config: cfg}).CheckOutdated(context.Background())
+	if err != nil {
+		t.Fatalf("CheckOutdated failed: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected missing skip policy to report no packages, got %d", len(got))
+	}
+}
+
+func TestCustomMissingPolicyInstallDryRun(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "missing-install",
+			Binary:  "__sarasa_missing_binary__",
+			Missing: "install",
+			Latest:  config.CustomLatestConfig{Value: "1.2.3"},
+			Upgrade: config.CustomActionConfig{Shell: "printf should-not-run"},
+		},
+	}
+
+	result, err := NewCustom(&Options{Config: cfg}).Upgrade(context.Background(), true)
+	if err != nil {
+		t.Fatalf("Upgrade dry-run failed: %v", err)
+	}
+	if len(result.Skipped) != 1 {
+		t.Fatalf("expected 1 skipped package, got %d", len(result.Skipped))
+	}
+	pkg := result.Skipped[0]
+	if pkg.Name != "missing-install" {
+		t.Errorf("Name = %q, want missing-install", pkg.Name)
+	}
+	if pkg.Current != customNotInstalled {
+		t.Errorf("Current = %q, want %q", pkg.Current, customNotInstalled)
+	}
+	if pkg.Latest != "1.2.3" {
+		t.Errorf("Latest = %q, want 1.2.3", pkg.Latest)
+	}
+	if pkg.Method != "pinned / shell" {
+		t.Errorf("Method = %q, want pinned / shell", pkg.Method)
+	}
+}
+
+func TestCustomMissingPolicyInstallRunsAndVerifies(t *testing.T) {
+	tmpDir := t.TempDir()
+	versionFile := filepath.Join(tmpDir, "installed-version.txt")
+
+	cfg := config.DefaultConfig()
+	cfg.Custom.StateDir = filepath.Join(tmpDir, "state")
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "bootstrap-tool",
+			Binary:  "__sarasa_missing_binary__",
+			Missing: "install",
+			Latest:  config.CustomLatestConfig{Value: "2.0.0"},
+			Upgrade: config.CustomActionConfig{
+				Argv: []string{"sh", "-c", "printf '2.0.0' > \"$1\"", "sarasa-test", versionFile},
+			},
+			Verify: config.CustomProbeConfig{
+				Argv: []string{"cat", versionFile},
+			},
+		},
+	}
+
+	result, err := NewCustom(&Options{Config: cfg}).Upgrade(context.Background(), false)
+	if err != nil {
+		t.Fatalf("Upgrade failed: %v", err)
+	}
+	if len(result.Upgraded) != 1 {
+		t.Fatalf("expected 1 upgraded package, got %d", len(result.Upgraded))
+	}
+	if result.Upgraded[0].Current != customNotInstalled {
+		t.Errorf("Current = %q, want %q", result.Upgraded[0].Current, customNotInstalled)
+	}
+	data, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatalf("read version file: %v", err)
+	}
+	if string(data) != "2.0.0" {
+		t.Errorf("version file = %q, want 2.0.0", data)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Custom.StateDir, "bootstrap-tool.json")); err != nil {
+		t.Errorf("expected state file to be written: %v", err)
+	}
+}
+
+func TestCustomMissingPolicyFail(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "missing-fail",
+			Binary:  "__sarasa_missing_binary__",
+			Missing: "fail",
+			Latest:  config.CustomLatestConfig{Value: "1.0.0"},
+		},
+	}
+
+	_, err := NewCustom(&Options{Config: cfg}).CheckOutdated(context.Background())
+	if err == nil {
+		t.Fatal("expected missing fail policy to return an error")
+	}
+	if !strings.Contains(err.Error(), "missing-fail") {
+		t.Fatalf("expected error to mention tool name, got %v", err)
+	}
+}
+
+func TestCustomMissingPolicyInvalid(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "missing-invalid",
+			Binary:  "__sarasa_missing_binary__",
+			Missing: "explode",
+			Latest:  config.CustomLatestConfig{Value: "1.0.0"},
+		},
+	}
+
+	_, err := NewCustom(&Options{Config: cfg}).CheckOutdated(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid missing policy to return an error")
+	}
+	if !strings.Contains(err.Error(), "unknown missing policy") {
+		t.Fatalf("expected unknown policy error, got %v", err)
+	}
+}
+
+func TestLatestGitHubReleaseUsesGHToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "gh-secret")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/indrasvat/demo/releases/latest" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer gh-secret" {
+			t.Fatalf("Authorization = %q, want Bearer gh-secret", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.3"}`))
+	}))
+	defer server.Close()
+
+	oldBaseURL := githubAPIBaseURL
+	oldClient := githubHTTPClient
+	githubAPIBaseURL = server.URL
+	githubHTTPClient = server.Client()
+	t.Cleanup(func() {
+		githubAPIBaseURL = oldBaseURL
+		githubHTTPClient = oldClient
+	})
+
+	got, err := latestGitHubRelease(context.Background(), "indrasvat/demo")
+	if err != nil {
+		t.Fatalf("latestGitHubRelease failed: %v", err)
+	}
+	if got != "v1.2.3" {
+		t.Fatalf("latestGitHubRelease = %q, want v1.2.3", got)
+	}
+}
+
+func TestLatestGitHubReleaseFallsBackToGHOnForbidden(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "rate limited", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	ghPath := filepath.Join(tmpDir, "gh")
+	if err := os.WriteFile(ghPath, []byte("#!/bin/sh\nprintf 'v9.8.7\\n'\n"), 0755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+
+	oldBaseURL := githubAPIBaseURL
+	oldClient := githubHTTPClient
+	githubAPIBaseURL = server.URL
+	githubHTTPClient = server.Client()
+	t.Cleanup(func() {
+		githubAPIBaseURL = oldBaseURL
+		githubHTTPClient = oldClient
+	})
+
+	got, err := latestGitHubRelease(context.Background(), "indrasvat/demo")
+	if err != nil {
+		t.Fatalf("latestGitHubRelease failed: %v", err)
+	}
+	if got != "v9.8.7" {
+		t.Fatalf("latestGitHubRelease = %q, want v9.8.7", got)
 	}
 }
 
