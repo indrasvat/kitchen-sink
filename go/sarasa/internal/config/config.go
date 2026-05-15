@@ -69,6 +69,7 @@ type CustomToolConfig struct {
 	Name           string               `toml:"name"`
 	Binary         string               `toml:"binary"`
 	Description    string               `toml:"description"`
+	Missing        string               `toml:"missing"`
 	Current        CustomProbeConfig    `toml:"current"`
 	Latest         CustomLatestConfig   `toml:"latest"`
 	Outdated       CustomOutdatedConfig `toml:"outdated"`

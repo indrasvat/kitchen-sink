@@ -72,6 +72,7 @@ default_timeout = "10m"
 [[custom.tools]]
 name = "nidhi"
 binary = "nidhi"
+missing = "install"
 current = { argv = ["nidhi", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 latest = { github_release = "indrasvat/nidhi" }
 upgrade = { shell = "curl -sSfL https://raw.githubusercontent.com/indrasvat/nidhi/main/install.sh | bash -s -- --version ${latest} --dir ~/.local/bin" }
@@ -106,6 +107,31 @@ upgrade = { argv = ["claude", "upgrade"] }
 verify = { argv = ["claude", "--version"], regex = "[0-9]+\\.[0-9]+\\.[0-9]+" }
 ```
 
+### Missing Tool Policy
+
+By default, a custom recipe with `binary = "tool"` is skipped when the binary is
+not present in `PATH`. Use `missing = "install"` for installer recipes that
+should bootstrap the tool when it is absent:
+
+```toml
+[[custom.tools]]
+name = "shux"
+binary = "shux"
+missing = "install"
+current = { argv = ["shux", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
+latest = { github_release = "indrasvat/shux" }
+upgrade = { shell = "curl -sSfL https://raw.githubusercontent.com/indrasvat/shux/main/install.sh | sh -s -- --version ${latest} --dir ~/.local/bin", timeout = "15m" }
+verify = { argv = ["shux", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
+```
+
+Supported values:
+
+| Policy | Behavior |
+| --- | --- |
+| unset / `skip` | Skip the recipe when `binary` is absent |
+| `install` | Report `not installed → latest` and run `upgrade` |
+| `fail` | Fail the custom manager when `binary` is absent |
+
 ### Local Repo Installer
 
 Use this for tools you build and install from an active checkout.
@@ -126,6 +152,7 @@ verify = { argv = ["local-tool", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9
 | --- | --- |
 | `name` | Display name and skip-list key |
 | `binary` | Optional executable used to decide whether the tool is installed |
+| `missing` | Missing-binary policy: `skip`, `install`, or `fail` |
 | `current` | Command probe for the installed version |
 | `latest` | Latest version provider |
 | `outdated` | Optional policy override |
@@ -162,6 +189,11 @@ Latest providers:
 | `github_release` | `latest = { github_release = "owner/repo" }` |
 | command probe | `latest = { argv = ["tool", "latest"], regex = "..." }` |
 | self-managed | `latest = { mode = "self" }` |
+
+For `github_release`, sarasa calls the GitHub Releases API. It uses
+`GITHUB_TOKEN` or `GH_TOKEN` when either is set, and falls back to authenticated
+`gh api` on GitHub 401/403 responses when the GitHub CLI is available. This
+keeps public release checks working after unauthenticated API rate limits.
 
 Outdated modes:
 

@@ -30,9 +30,18 @@ type Custom struct {
 }
 
 const (
-	customMethodCommand = "command"
-	customLatestSelf    = "self"
-	customUnknown       = "unknown"
+	customMethodCommand  = "command"
+	customLatestSelf     = "self"
+	customMissingSkip    = "skip"
+	customMissingInstall = "install"
+	customMissingFail    = "fail"
+	customNotInstalled   = "not installed"
+	customUnknown        = "unknown"
+)
+
+var (
+	githubAPIBaseURL = "https://api.github.com"
+	githubHTTPClient = &http.Client{Timeout: 15 * time.Second}
 )
 
 // NewCustom creates a custom-tool manager.
@@ -69,7 +78,16 @@ func (c *Custom) CheckOutdated(ctx context.Context) ([]Package, error) {
 			continue
 		}
 		if !customToolAvailable(tool) {
-			log.Warn("Skipping unavailable custom tool", "tool", tool.Name, "binary", tool.Binary)
+			pkg, outdated, err := c.checkMissingTool(ctx, tool)
+			if err != nil {
+				return nil, err
+			}
+			if outdated {
+				packages = append(packages, pkg)
+			}
+			if !outdated {
+				log.Warn("Skipping unavailable custom tool", "tool", tool.Name, "binary", tool.Binary)
+			}
 			continue
 		}
 
@@ -228,6 +246,42 @@ func (c *Custom) checkTool(ctx context.Context, tool config.CustomToolConfig) (P
 	}, outdated, nil
 }
 
+func (c *Custom) checkMissingTool(ctx context.Context, tool config.CustomToolConfig) (Package, bool, error) {
+	switch missingPolicy(tool) {
+	case customMissingSkip:
+		return Package{}, false, nil
+	case customMissingFail:
+		return Package{}, false, fmt.Errorf("custom tool %q missing binary %q", tool.Name, tool.Binary)
+	case customMissingInstall:
+		latest, latestMethod, err := latestVersion(ctx, c.opts.Config.Custom.DefaultTimeout, tool)
+		if err != nil {
+			return Package{}, false, err
+		}
+		return Package{
+			Name:    tool.Name,
+			Current: customNotInstalled,
+			Latest:  displayVersion(latest),
+			IsMajor: false,
+			Method:  methodTag(latestMethod, actionMethod(tool.Upgrade)),
+		}, true, nil
+	default:
+		return Package{}, false, fmt.Errorf("unknown missing policy %q for custom tool %q", tool.Missing, tool.Name)
+	}
+}
+
+func missingPolicy(tool config.CustomToolConfig) string {
+	switch strings.TrimSpace(strings.ToLower(tool.Missing)) {
+	case "", customMissingSkip:
+		return customMissingSkip
+	case customMissingInstall:
+		return customMissingInstall
+	case customMissingFail:
+		return customMissingFail
+	default:
+		return strings.TrimSpace(strings.ToLower(tool.Missing))
+	}
+}
+
 func customToolAvailable(tool config.CustomToolConfig) bool {
 	if tool.Binary == "" {
 		return true
@@ -308,18 +362,18 @@ func isCustomOutdated(ctx context.Context, defaultTimeout string, tool config.Cu
 }
 
 func latestGitHubRelease(ctx context.Context, repo string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+repo+"/releases/latest", nil)
+	url := strings.TrimRight(githubAPIBaseURL, "/") + "/repos/" + repo + "/releases/latest"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "sarasa")
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+	if token := githubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -328,7 +382,15 @@ func latestGitHubRelease(ctx context.Context, repo string) (string, error) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github releases latest returned HTTP %d for %s", resp.StatusCode, repo)
+		statusErr := fmt.Errorf("github releases latest returned HTTP %d for %s", resp.StatusCode, repo)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			if version, ghErr := latestGitHubReleaseWithGH(ctx, repo); ghErr == nil {
+				return version, nil
+			} else {
+				return "", fmt.Errorf("%w; gh api fallback failed: %w", statusErr, ghErr)
+			}
+		}
+		return "", statusErr
 	}
 
 	var payload struct {
@@ -341,6 +403,33 @@ func latestGitHubRelease(ctx context.Context, repo string) (string, error) {
 		return "", fmt.Errorf("github release for %s did not include tag_name", repo)
 	}
 	return payload.TagName, nil
+}
+
+func githubToken() string {
+	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func latestGitHubReleaseWithGH(ctx context.Context, repo string) (string, error) {
+	if _, err := osexec.LookPath("gh"); err != nil {
+		return "", err
+	}
+	cmd := osexec.CommandContext(ctx, "gh", "api", "repos/"+repo+"/releases/latest", "--jq", ".tag_name")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	tag := strings.TrimSpace(stdout.String())
+	if tag == "" {
+		return "", fmt.Errorf("github release for %s did not include tag_name", repo)
+	}
+	return tag, nil
 }
 
 func runVersionProbe(ctx context.Context, defaultTimeout, toolTimeout string, probe config.CustomProbeConfig, vars map[string]string) (string, error) {

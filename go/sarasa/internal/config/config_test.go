@@ -148,6 +148,7 @@ default_timeout = "30s"
 [[custom.tools]]
 name = "demo"
 binary = "demo"
+missing = "install"
 timeout = "1m"
 allow_unchanged = true
 current = { argv = ["demo", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
@@ -172,6 +173,9 @@ verify = { argv = ["demo", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 	tool := cfg.Custom.Tools[0]
 	if tool.Name != "demo" {
 		t.Errorf("tool.Name = %q, want demo", tool.Name)
+	}
+	if tool.Missing != "install" {
+		t.Errorf("tool.Missing = %q, want install", tool.Missing)
 	}
 	if !tool.AllowUnchanged {
 		t.Error("expected allow_unchanged=true")
