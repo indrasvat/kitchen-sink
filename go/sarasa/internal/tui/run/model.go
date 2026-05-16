@@ -301,11 +301,10 @@ func (m Model) renderManagerPanel(result *ManagerResult, width int) string {
 	var b strings.Builder
 
 	// Manager header with icon OUTSIDE the panel (with proper margin)
-	icon := ui.ManagerIcon(result.Name)
 	titleStyle := ui.GetManagerTitleStyle(result.Name)
 	title := titleStyle.Render(strings.ToUpper(result.Name))
 	headerStyle := lipgloss.NewStyle().MarginLeft(2)
-	b.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", icon, title)) + "\n")
+	b.WriteString(headerStyle.Render(ui.ManagerIconLabelPrefix(result.Name)+title) + "\n")
 
 	// Panel content (no emoji inside)
 	var content strings.Builder

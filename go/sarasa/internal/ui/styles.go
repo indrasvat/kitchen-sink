@@ -39,7 +39,7 @@ func ManagerColor(name string) lipgloss.AdaptiveColor {
 		return ColorBun
 	case "skills":
 		return ColorSkills
-	case "custom":
+	case managerCustom:
 		return ColorCustom
 	default:
 		return ColorPrimary

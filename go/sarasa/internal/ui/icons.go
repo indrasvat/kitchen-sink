@@ -21,9 +21,11 @@ const (
 	IconPipx    = "🐍"
 	IconBun     = "🥟"
 	IconSkills  = "🧩"
-	IconCustom  = "🛠"
+	IconCustom  = "🛠️"
 	IconPackage = "📦"
 )
+
+const managerCustom = "custom"
 
 // ManagerIcon returns the icon for a given manager name.
 func ManagerIcon(name string) string {
@@ -40,11 +42,17 @@ func ManagerIcon(name string) string {
 		return IconBun
 	case "skills":
 		return IconSkills
-	case "custom":
+	case managerCustom:
 		return IconCustom
 	default:
 		return IconPackage
 	}
+}
+
+// ManagerIconLabelPrefix returns the icon plus the terminal-cell gap before a
+// styled manager label.
+func ManagerIconLabelPrefix(name string) string {
+	return ManagerIcon(name) + " "
 }
 
 // PlainManagerIcon returns a plain text indicator for non-TTY output.
