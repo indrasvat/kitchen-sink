@@ -23,7 +23,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "sarasa",
 	Short: "Automated global package manager upgrades",
-	Long: `Sarasa automates global package upgrades for brew, volta/npm, bun, pipx, and skills
+	Long: `Sarasa automates global package upgrades for brew, volta/npm, bun, pipx, skills, and custom tools
 with scheduled background execution via launchd.
 
 Uses volta when detected, otherwise falls back to npm.
@@ -141,6 +141,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 			{ui.IconPipx, "pipx", ui.ColorPipx},
 			{ui.IconBun, "bun", ui.ColorBun},
 			{ui.IconSkills, "skills", ui.ColorSkills},
+			{ui.IconCustom, "custom", ui.ColorCustom},
 		}
 		b.WriteString("  ")
 		for i, m := range managers {
@@ -154,7 +155,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 		b.WriteString(mutedStyle.Render("  (uses volta when detected, otherwise npm)"))
 		b.WriteString("\n")
 	} else {
-		b.WriteString("  brew · volta · npm · pipx · bun · skills\n")
+		b.WriteString("  brew · volta · npm · pipx · bun · skills · custom\n")
 		b.WriteString("  (uses volta when detected, otherwise npm)\n")
 	}
 	b.WriteString("\n")
