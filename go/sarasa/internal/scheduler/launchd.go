@@ -54,7 +54,7 @@ const (
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>{{.EnvironmentPath}}</string>
     </dict>
 </dict>
 </plist>`
@@ -68,10 +68,11 @@ type ScheduleTime struct {
 
 // Config holds launchd configuration.
 type Config struct {
-	Label      string
-	BinaryPath string
-	LogDir     string
-	Times      []ScheduleTime
+	Label           string
+	BinaryPath      string
+	LogDir          string
+	Times           []ScheduleTime
+	EnvironmentPath string
 }
 
 // PlistPath returns the path to the launchd plist file.
@@ -128,9 +129,10 @@ func DefaultConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Label:      LaunchAgentLabel,
-		BinaryPath: binaryPath,
-		LogDir:     filepath.Join(homeDir, "Library", "Logs", "sarasa"),
+		Label:           LaunchAgentLabel,
+		BinaryPath:      binaryPath,
+		LogDir:          filepath.Join(homeDir, "Library", "Logs", "sarasa"),
+		EnvironmentPath: DefaultEnvironmentPath(binaryPath),
 		Times: []ScheduleTime{
 			{Hour: 0, Minute: 0},
 			{Hour: 2, Minute: 0},
@@ -148,6 +150,47 @@ func DefaultConfig() (*Config, error) {
 	}, nil
 }
 
+// DefaultEnvironmentPath returns a launchd-safe PATH for scheduled sarasa runs.
+//
+// launchd jobs do not inherit the user's interactive shell PATH. Sarasa custom
+// tools are commonly installed in user-local directories, so include those
+// explicitly along with the directory containing the sarasa binary.
+func DefaultEnvironmentPath(binaryPath string) string {
+	homeDir, _ := os.UserHomeDir()
+	candidates := []string{}
+	if dir := filepath.Dir(binaryPath); binaryPath != "" && dir != "." {
+		candidates = append(candidates, dir)
+	}
+	if homeDir != "" {
+		candidates = append(candidates,
+			filepath.Join(homeDir, ".local", "bin"),
+			filepath.Join(homeDir, "bin"),
+			filepath.Join(homeDir, "go", "bin"),
+		)
+	}
+	candidates = append(candidates, filepath.SplitList(os.Getenv("PATH"))...)
+	candidates = append(candidates,
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	)
+
+	seen := make(map[string]bool, len(candidates))
+	path := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || !filepath.IsAbs(candidate) || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		path = append(path, candidate)
+	}
+	return strings.Join(path, ":")
+}
+
 // GeneratePlist generates the launchd plist content.
 func GeneratePlist(cfg *Config) ([]byte, error) {
 	tmpl, err := template.New("plist").Parse(plistTemplate)
@@ -155,8 +198,13 @@ func GeneratePlist(cfg *Config) ([]byte, error) {
 		return nil, fmt.Errorf("failed to parse plist template: %w", err)
 	}
 
+	renderCfg := *cfg
+	if renderCfg.EnvironmentPath == "" {
+		renderCfg.EnvironmentPath = DefaultEnvironmentPath(renderCfg.BinaryPath)
+	}
+
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, cfg); err != nil {
+	if err := tmpl.Execute(&buf, &renderCfg); err != nil {
 		return nil, fmt.Errorf("failed to execute plist template: %w", err)
 	}
 

@@ -39,7 +39,7 @@ TOML
 
 shux session kill "${SESSION}" >/dev/null 2>&1 || true
 shux --format json session create "${SESSION}" -d -- \
-    env -u NO_COLOR TERM=xterm-256color "${BINARY}" --config "${CONFIG}" run --dry-run >/dev/null
+    env -u NO_COLOR TERM=xterm-256color COLORTERM=truecolor "${BINARY}" --config "${CONFIG}" run --dry-run >/dev/null
 
 shux pane set-size -s "${SESSION}" --cols 110 --rows 30 >/dev/null
 shux pane wait-for -s "${SESSION}" --text "CUSTOM" --timeout-ms 10000 >/dev/null

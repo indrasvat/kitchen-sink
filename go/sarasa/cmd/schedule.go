@@ -14,6 +14,10 @@ var scheduleCmd = &cobra.Command{
 	Short: "Manage scheduled upgrades",
 	Long: `Manage launchd-based scheduled upgrades.
 
+Scheduled runs use a generated non-interactive launchd environment with a PATH
+that includes user-local tool directories such as ~/.local/bin, ~/bin, and
+~/go/bin, plus the directory containing the sarasa binary.
+
 Examples:
   sarasa schedule install             # Install launchd agent
   sarasa schedule uninstall           # Remove launchd agent
@@ -63,10 +67,11 @@ func runScheduleInstall(_ *cobra.Command, _ []string) error {
 	}
 
 	launchdCfg := &scheduler.Config{
-		Label:      scheduler.LaunchAgentLabel,
-		BinaryPath: binaryPath,
-		LogDir:     cfg.Logging.Dir,
-		Times:      times,
+		Label:           scheduler.LaunchAgentLabel,
+		BinaryPath:      binaryPath,
+		LogDir:          cfg.Logging.Dir,
+		Times:           times,
+		EnvironmentPath: scheduler.DefaultEnvironmentPath(binaryPath),
 	}
 
 	if err := scheduler.Install(launchdCfg); err != nil {

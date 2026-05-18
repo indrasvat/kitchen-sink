@@ -22,7 +22,7 @@ fi
 args+=(run --dry-run)
 
 shux --format json session create "${SESSION}" -d -- \
-    env -u NO_COLOR TERM=xterm-256color "${args[@]}" >/dev/null
+    env -u NO_COLOR TERM=xterm-256color COLORTERM=truecolor "${args[@]}" >/dev/null
 
 shux pane set-size -s "${SESSION}" --cols 100 --rows 34 >/dev/null
 shux pane wait-for -s "${SESSION}" --text "SARASA DRY RUN" --timeout-ms 10000 >/dev/null

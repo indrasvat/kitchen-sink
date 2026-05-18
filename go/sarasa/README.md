@@ -21,9 +21,42 @@ managers and user-defined tools that are installed outside package managers.
 sarasa init
 sarasa status
 sarasa run --dry-run
+sarasa run --json
 sarasa run
 sarasa logs
 sarasa schedule install
+```
+
+`sarasa run --json` always uses non-interactive output, even when stdout is a
+TTY. Dry-run candidates are reported under `would_upgrade`.
+
+Example:
+
+```json
+{
+  "dry_run": true,
+  "success": true,
+  "summary": {
+    "upgraded": 0,
+    "failed": 0,
+    "skipped": 0,
+    "would_upgrade": 1
+  },
+  "managers": [
+    {
+      "name": "custom",
+      "available": true,
+      "would_upgrade": [
+        {
+          "name": "demo-tool",
+          "current": "v1.0.0",
+          "latest": "v1.1.0",
+          "method": "pinned / shell"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 ## Configuration
@@ -46,6 +79,10 @@ custom = ["experimental-tool"]
 [schedule]
 times = ["08:00", "14:00", "22:00"]
 ```
+
+Scheduled launchd runs use an explicit PATH that includes the directory
+containing the Sarasa binary, `~/.local/bin`, `~/bin`, `~/go/bin`, the current
+PATH at schedule install time, and the standard macOS system paths.
 
 ## Custom Tools
 
@@ -218,4 +255,5 @@ Visual checks use shux so TUI rendering is verified in a real PTY:
 ```bash
 .shux/scripts/capture-run-dry-run.sh
 .shux/scripts/capture-custom-dry-run.sh
+.shux/scripts/capture-run-json.sh
 ```

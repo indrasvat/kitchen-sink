@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +24,7 @@ var (
 	runDryRun      bool
 	runNoMajor     bool
 	runSkipCleanup bool
+	runJSON        bool
 )
 
 var runCmd = &cobra.Command{
@@ -32,9 +36,11 @@ Examples:
   sarasa run                          # Run all available managers
   sarasa run --managers=brew,pipx     # Run specific managers
   sarasa run --dry-run                # Show what would be upgraded
+  sarasa run --json                   # Output machine-readable JSON
   sarasa run --no-major               # Skip major version upgrades (npm)
-  sarasa run --skip-cleanup           # Skip cleanup phase`,
-	RunE: runRun,
+	sarasa run --skip-cleanup           # Skip cleanup phase`,
+	RunE:         runRun,
+	SilenceUsage: true,
 }
 
 func init() {
@@ -44,6 +50,38 @@ func init() {
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "show what would be upgraded without making changes")
 	runCmd.Flags().BoolVar(&runNoMajor, "no-major", false, "skip major version upgrades (npm only)")
 	runCmd.Flags().BoolVar(&runSkipCleanup, "skip-cleanup", false, "skip cleanup phase")
+	runCmd.Flags().BoolVar(&runJSON, "json", false, "output as JSON")
+}
+
+// RunOutput is the JSON result envelope for sarasa run.
+type RunOutput struct {
+	DryRun     bool               `json:"dry_run"`
+	Success    bool               `json:"success"`
+	DurationMs int64              `json:"duration_ms"`
+	Summary    RunSummary         `json:"summary"`
+	Managers   []RunManagerResult `json:"managers"`
+}
+
+// RunSummary contains aggregate run counts.
+type RunSummary struct {
+	Upgraded      int `json:"upgraded"`
+	Failed        int `json:"failed"`
+	Skipped       int `json:"skipped"`
+	WouldUpgrade  int `json:"would_upgrade,omitempty"`
+	ManagerErrors int `json:"manager_errors,omitempty"`
+}
+
+// RunManagerResult contains one manager's run outcome.
+type RunManagerResult struct {
+	Name         string            `json:"name"`
+	Available    bool              `json:"available"`
+	DurationMs   int64             `json:"duration_ms,omitempty"`
+	Upgraded     []manager.Package `json:"upgraded,omitempty"`
+	Failed       []manager.Package `json:"failed,omitempty"`
+	Skipped      []manager.Package `json:"skipped,omitempty"`
+	WouldUpgrade []manager.Package `json:"would_upgrade,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	CleanupError string            `json:"cleanup_error,omitempty"`
 }
 
 func runRun(_ *cobra.Command, _ []string) error {
@@ -70,6 +108,19 @@ func runRun(_ *cobra.Command, _ []string) error {
 		managerNames = manager.List()
 	}
 
+	log.Info("Starting sarasa run",
+		"managers", managerNames,
+		"dry_run", runDryRun,
+	)
+
+	// Wrap config to implement ManagerConfigProvider interface
+	cfgWrapper := &configWrapper{cfg: cfg}
+
+	// JSON output is always non-interactive, even when stdout is a TTY.
+	if runJSON {
+		return runRunJSON(managerNames, opts, cfgWrapper, os.Stdout)
+	}
+
 	// Get managers
 	managers, err := manager.GetMultiple(managerNames, opts)
 	if err != nil {
@@ -82,16 +133,8 @@ func runRun(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	log.Info("Starting sarasa run",
-		"managers", managerNames,
-		"dry_run", runDryRun,
-	)
-
 	// Detect output mode
 	mode := ui.DetectOutputMode()
-
-	// Wrap config to implement ManagerConfigProvider interface
-	cfgWrapper := &configWrapper{cfg: cfg}
 
 	switch mode {
 	case ui.ModeTUI:
@@ -100,6 +143,93 @@ func runRun(_ *cobra.Command, _ []string) error {
 		return runRunPlain(managers, opts, cfgWrapper, mode == ui.ModeStyled)
 	}
 
+	return nil
+}
+
+func runRunJSON(managerNames []string, opts *manager.Options, cfg *configWrapper, writer io.Writer) error {
+	ctx, cancel := signal.NotifyContext(context.Background())
+	defer cancel()
+
+	output := RunOutput{
+		DryRun:   opts.DryRun,
+		Success:  true,
+		Managers: make([]RunManagerResult, 0, len(managerNames)),
+	}
+	overallStart := time.Now()
+
+	for _, name := range managerNames {
+		result := RunManagerResult{Name: name}
+
+		m, err := manager.Get(name, opts)
+		if err != nil {
+			result.Error = err.Error()
+			output.Success = false
+			output.Summary.ManagerErrors++
+			output.Managers = append(output.Managers, result)
+			continue
+		}
+
+		result.Available = m.IsAvailable()
+		if !result.Available {
+			output.Managers = append(output.Managers, result)
+			continue
+		}
+
+		opts.SkipList = cfg.GetSkipList(name)
+		logger.LogStart(m.Name())
+		start := time.Now()
+		upgradeResult, err := m.Upgrade(ctx, opts.DryRun)
+		result.DurationMs = time.Since(start).Milliseconds()
+		if err != nil {
+			result.Error = err.Error()
+			output.Success = false
+			output.Summary.ManagerErrors++
+			logger.LogComplete(m.Name(), 0, 1, result.DurationMs)
+			output.Managers = append(output.Managers, result)
+			continue
+		}
+		if upgradeResult == nil {
+			upgradeResult = &manager.UpgradeResult{}
+		}
+
+		result.Upgraded = upgradeResult.Upgraded
+		result.Failed = upgradeResult.Failed
+		if opts.DryRun {
+			result.WouldUpgrade = upgradeResult.Skipped
+			output.Summary.WouldUpgrade += len(upgradeResult.Skipped)
+		} else {
+			result.Skipped = upgradeResult.Skipped
+			output.Summary.Skipped += len(upgradeResult.Skipped)
+		}
+		output.Summary.Upgraded += len(upgradeResult.Upgraded)
+		output.Summary.Failed += len(upgradeResult.Failed)
+		if len(upgradeResult.Failed) > 0 {
+			output.Success = false
+		}
+
+		if !opts.DryRun && !opts.SkipCleanup {
+			if err := m.Cleanup(ctx); err != nil {
+				result.CleanupError = err.Error()
+				output.Success = false
+				output.Summary.ManagerErrors++
+			}
+		}
+
+		logger.LogComplete(m.Name(), len(upgradeResult.Upgraded), len(upgradeResult.Failed), result.DurationMs)
+		output.Managers = append(output.Managers, result)
+	}
+
+	output.DurationMs = time.Since(overallStart).Milliseconds()
+	data, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, string(data)); err != nil {
+		return err
+	}
+	if !output.Success {
+		return fmt.Errorf("sarasa run completed with failures")
+	}
 	return nil
 }
 
