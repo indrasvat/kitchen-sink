@@ -156,10 +156,11 @@ func applyInitResult(result wizard.Result) error {
 
 		binaryPath, _ := os.Executable()
 		launchdCfg := &scheduler.Config{
-			Label:      scheduler.LaunchAgentLabel,
-			BinaryPath: binaryPath,
-			LogDir:     cfg.Logging.Dir,
-			Times:      times,
+			Label:           scheduler.LaunchAgentLabel,
+			BinaryPath:      binaryPath,
+			LogDir:          cfg.Logging.Dir,
+			Times:           times,
+			EnvironmentPath: scheduler.DefaultEnvironmentPath(binaryPath),
 		}
 
 		if err := scheduler.Install(launchdCfg); err != nil {
