@@ -92,8 +92,8 @@ if [ "${1:-}" = "--bounce-once" ]; then
   trap 'force_up || true' EXIT
   trap 'exit 143' INT TERM HUP
   note "manual --bounce-once invoked"
-  bounce || true
-  exit 0
+  bounce          # propagate status so a hotkey/script sees a reset that failed
+  exit $?         # (the EXIT trap still forces awdl0 back up regardless)
 fi
 
 # ---- daemon ----

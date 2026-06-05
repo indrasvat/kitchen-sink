@@ -69,6 +69,9 @@ _done() { printf "  %s│%s  %s✔%s %s\n" "${DIM}${CYN}" "$RST" "$BGRN" "$RST" 
 _warn() { printf "  %s│%s  %s⚠  %s%s\n" "${DIM}${CYN}" "$RST" "$BYEL" "$*" "$RST"; }
 _fail() { printf "  %s│%s  %s✘%s %s\n" "${DIM}${CYN}" "$RST" "$RED" "$RST" "$*"; }
 _step() { printf "  %s│%s  %s▶%s %s\n" "${DIM}${CYN}" "$RST" "$BCYN" "$RST" "$*"; }
+# Run a command that MUST succeed; abort (no half-installed state). The script
+# can't use `set -e` — its many `[ cond ] && action` lines would abort spuriously.
+_must() { "$@" || { _fail "failed: $*"; exit 1; }; }
 
 cleanup() { [ -n "$CLEANUP_DIR" ] && [ -d "$CLEANUP_DIR" ] && rm -rf "$CLEANUP_DIR"; }
 trap cleanup EXIT INT TERM
@@ -163,25 +166,29 @@ locate_artifacts() {
 do_install() {
     _step "Installing files (root-owned)…"
     # Root-only dir (NOT /usr/local/bin — admin-writable script run by root = LPE).
-    install -d -m 0755 -o root -g wheel "$APPDIR"
-    install -m 0755 -o root -g wheel "$SRC_DIR/airdrop-autoheal.sh" "$APPDIR/airdrop-autoheal.sh"
-    install -m 0755 -o root -g wheel "$SRC_DIR/doctor.sh"           "$APPDIR/doctor.sh"
-    install -m 0644 -o root -g wheel "$SRC_DIR/${LABEL}.plist"      "$PLIST"
+    _must install -d -m 0755 -o root -g wheel "$APPDIR"
+    _must install -m 0755 -o root -g wheel "$SRC_DIR/airdrop-autoheal.sh" "$APPDIR/airdrop-autoheal.sh"
+    _must install -m 0755 -o root -g wheel "$SRC_DIR/doctor.sh"           "$APPDIR/doctor.sh"
+    _must install -m 0644 -o root -g wheel "$SRC_DIR/${LABEL}.plist"      "$PLIST"
 
     # Private (non-world-readable) audit logs.
     local f
     for f in "$LOGF" "$ERRF"; do
-        [ -e "$f" ] || : >"$f"
-        chown root:admin "$f"; chmod 0640 "$f"
+        if [ ! -e "$f" ]; then : >"$f" || { _fail "cannot create $f"; exit 1; }; fi
+        _must chown root:admin "$f"
+        _must chmod 0640 "$f"
     done
 
     # Bound growth via newsyslog (rotate ~1MB, keep 7, bzip2).
-    cat >"$NEWSYSLOG" <<'NSL'
+    if ! cat >"$NEWSYSLOG" <<'NSL'
 # logfilename                     [owner:group]  mode  count  size  when  flags
 /var/log/airdrop-autoheal.log     root:admin     640   7      1024  *     J
 /var/log/airdrop-autoheal.err     root:admin     640   7      1024  *     J
 NSL
-    chmod 0644 "$NEWSYSLOG"
+    then
+        _fail "cannot write $NEWSYSLOG"; exit 1
+    fi
+    _must chmod 0644 "$NEWSYSLOG"
     _done "Files installed"
 
     _step "Loading LaunchDaemon…"
