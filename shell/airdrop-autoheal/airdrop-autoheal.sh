@@ -116,14 +116,16 @@ while :; do
   if IFS= read -r -t "$HEARTBEAT" line <&3; then
     :   # got a line — fall through to process it
   else
-    # read failed: idle-timeout OR stream death. Distinguish by stream liveness
-    # (NOT by $?, which is 1 for both on /bin/bash 3.2).
-    if kill -0 "$STREAM_PID" 2>/dev/null; then
+    # read failed: idle-timeout (stream alive) vs stream death. Distinguish by
+    # the stream's process STATE — NOT `kill -0`, which is fooled by an unreaped
+    # zombie (a dead child still "exists"), spinning this loop and spamming the
+    # log. State "Z" (zombie) or empty (reaped/gone) both mean the stream died.
+    sstate="$(ps -p "$STREAM_PID" -o state= 2>/dev/null | cut -c1)"
+    if [ -n "$sstate" ] && [ "$sstate" != "Z" ]; then
       note "heartbeat — watching (awdl0 $(status), bounces this window ${breaker_count})"
       continue
-    else
-      break   # stream is gone → exit for relaunch
     fi
+    break   # stream dead/zombie → exit non-zero for launchd to relaunch
   fi
 
   case "$line" in
