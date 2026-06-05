@@ -7,6 +7,7 @@ A curated collection of useful scripts for macOS automation, development setup, 
 ```
 .
 ├── shell/
+│   ├── airdrop-autoheal/    # Self-healing LaunchDaemon for the awdl0 AirDrop flake
 │   ├── screenshot-tools/    # Terminal screenshot automation
 │   ├── dev-setup/           # Development environment setup scripts
 │   └── utilities/           # General-purpose utilities
@@ -97,6 +98,21 @@ Two-script workflow for cloning your dev environment across Macs.
 # Watch kubectl and notify on changes
 ./watch-and-notify.sh kubectl get po --watch --no-headers
 ```
+
+### AirDrop Auto-Heal
+
+[`airdrop-autoheal/`](shell/airdrop-autoheal/) is a root `LaunchDaemon` that self-heals the macOS **`awdl0` AirDrop path-migration flake** — the intermittent failure where a transfer is accepted, then dies mid-flight because macOS migrates the connection off the `awdl0` peer-to-peer link (common with a VPN like Tailscale running). It watches `sharingd`'s log and re-primes `awdl0` within ~1s so your re-send succeeds.
+
+```bash
+# Install (auto-elevates with sudo, verifies with doctor):
+curl -fsSL https://raw.githubusercontent.com/indrasvat/kitchen-sink/main/shell/airdrop-autoheal/install.sh | sudo bash
+
+# Health report (no sudo) + manual reset
+bash "/Library/Application Support/airdrop-autoheal/doctor.sh"
+sudo "/Library/Application Support/airdrop-autoheal/airdrop-autoheal.sh" --bounce-once
+```
+
+Hardened across two adversarial reviews (no orphaned processes, PID-reuse guard, circuit breaker, never leaves `awdl0` down). See [`shell/airdrop-autoheal/README.md`](shell/airdrop-autoheal/README.md) for the safety design.
 
 ## Python Scripts
 

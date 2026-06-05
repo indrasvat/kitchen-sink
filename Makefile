@@ -1,4 +1,4 @@
-.PHONY: help install install-shell install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks tools tools-ci
+.PHONY: help install install-shell install-airdrop-autoheal install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks tools tools-ci
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
@@ -47,6 +47,9 @@ install-go: ## Build and install Go tools
 	@cd $(CURDIR)/go/sarasa && go build -o $(BIN_DIR)/sarasa .
 	@echo -e "  $(GREEN)✓$(NC) Go tools built and installed"
 
+install-airdrop-autoheal: ## Install the AirDrop auto-heal LaunchDaemon (needs sudo; not part of `make install`)
+	@sudo bash $(CURDIR)/shell/airdrop-autoheal/install.sh
+
 uninstall: ## Remove installed scripts from ~/.local/bin
 	@echo "Removing installed scripts..."
 	@rm -f $(BIN_DIR)/iterm2-screenshot
@@ -89,6 +92,8 @@ list: ## List all available scripts
 	@ls -1 shell/utilities/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed 's/^/    /'
 	@echo "  dev-setup/"
 	@ls -1 shell/dev-setup/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed 's/^/    /'
+	@echo "  airdrop-autoheal/"
+	@echo "    airdrop-autoheal (LaunchDaemon -- make install-airdrop-autoheal)"
 	@echo ""
 	@echo -e "$(CYAN)Python Scripts$(NC)"
 	@echo "  automation/"
