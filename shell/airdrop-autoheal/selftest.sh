@@ -35,13 +35,20 @@ fi
 # 3) action path: root-only one-shot bounce — the exact code the daemon runs
 echo "3) exercising the bounce action via 'sudo --bounce-once'…"
 before=$(/sbin/ifconfig awdl0 2>/dev/null | awk '/status:/{print $2}')
-sudo "$BIN" --bounce-once
+# Count existing bounces FIRST so we require a NEW one — a stale BOUNCED line
+# from an earlier run must not falsely certify the reset path.
+bounces_before=$(sudo grep -c "BOUNCED awdl0" "$LOG" 2>/dev/null || true); bounces_before=${bounces_before:-0}
+if ! sudo "$BIN" --bounce-once; then
+  echo "     FAIL — '--bounce-once' returned non-zero"
+  exit 1
+fi
 sleep 1
 after=$(/sbin/ifconfig awdl0 2>/dev/null | awk '/status:/{print $2}')
-if sudo tail -n 5 "$LOG" 2>/dev/null | grep -q "BOUNCED awdl0"; then
-  echo "     PASS — bounce executed + logged (awdl0 ${before:-?} -> ${after:-?})"
+bounces_after=$(sudo grep -c "BOUNCED awdl0" "$LOG" 2>/dev/null || true); bounces_after=${bounces_after:-0}
+if [ "$bounces_after" -gt "$bounces_before" ]; then
+  echo "     PASS — a NEW bounce was logged (awdl0 ${before:-?} -> ${after:-?})"
 else
-  echo "     FAIL — no BOUNCED line in audit log"
+  echo "     FAIL — no new BOUNCED line (before=${bounces_before}, after=${bounces_after})"
   exit 1
 fi
 
