@@ -190,16 +190,17 @@ NSL
     local i
     for i in $(seq 1 20); do launchctl print "system/${LABEL}" >/dev/null 2>&1 || break; sleep 0.5; done
     launchctl enable "system/${LABEL}" 2>/dev/null || true
-    local bs_ok=0
+    # Capture stderr in a variable — no predictable /tmp file for a root process
+    # to be tricked (symlink/TOCTOU) into clobbering.
+    local bs_ok=0 bs_err=""
     for i in 1 2 3 4 5; do
-        if launchctl bootstrap system "$PLIST" 2>/tmp/airdrop-bs.err; then bs_ok=1; break; fi
+        if bs_err="$(launchctl bootstrap system "$PLIST" 2>&1)"; then bs_ok=1; break; fi
         launchctl bootout "system/${LABEL}" 2>/dev/null || true; sleep 1
     done
     if [ "$bs_ok" -ne 1 ]; then
-        _fail "bootstrap failed:"; sed 's/^/        /' /tmp/airdrop-bs.err 2>/dev/null || true
-        rm -f /tmp/airdrop-bs.err; exit 1
+        _fail "bootstrap failed:"; printf '%s\n' "$bs_err" | sed 's/^/        /'
+        exit 1
     fi
-    rm -f /tmp/airdrop-bs.err
     launchctl kickstart -k "system/${LABEL}" 2>/dev/null || true
     _done "Daemon loaded"
 }
