@@ -219,8 +219,11 @@ verify() {
     _step "Verifying with doctor…"; printf "\n"
     sleep 3   # let the daemon write its start line + spawn the log child
     if [ -x "$APPDIR/doctor.sh" ]; then
-        /bin/bash "$APPDIR/doctor.sh" || true
+        /bin/bash "$APPDIR/doctor.sh"   # exits with the number of FAILs (0 = healthy)
+        return $?
     fi
+    _warn "doctor.sh missing — skipping verification"
+    return 0
 }
 
 # ── Post-action boxes ───────────────────────────────────────────
@@ -250,8 +253,17 @@ main() {
     check_prereqs || exit 1
     locate_artifacts
     do_install
-    post_install
-    verify
+    # Gate the success box on doctor: a flapping daemon must NOT report success.
+    if verify; then
+        post_install
+    else
+        rc=$?
+        printf "\n"
+        _fail "doctor reported ${rc} problem(s) — the daemon did not come up healthy."
+        _info "Inspect: ${BOLD}sudo tail -50 ${LOGF}${RST}"
+        printf "\n"
+        exit "$rc"
+    fi
 }
 
 # Run main only when executed/piped directly (not when sourced by tests).
