@@ -21,7 +21,16 @@ sudo bash shell/airdrop-autoheal/install.sh
 
 # Check prerequisites only (no sudo):
 bash shell/airdrop-autoheal/install.sh --check
+
+# Install from a branch/tag (e.g. testing a PR) — no code change:
+curl -fsSL https://raw.githubusercontent.com/indrasvat/kitchen-sink/<ref>/shell/airdrop-autoheal/install.sh \
+  | sudo AIRDROP_AUTOHEAL_REF=<ref> bash
 ```
+
+The installer fetches its artifacts over plain HTTPS (no `git`, so a user's
+`url.insteadOf` SSH rewrite can't break it). Source is `main` by default;
+override with `AIRDROP_AUTOHEAL_REF` (branch/tag) or `AIRDROP_AUTOHEAL_RAW_BASE`
+(full base URL).
 
 The installer is idempotent, verifies itself with `doctor` at the end, and
 needs root exactly **once** (to install a LaunchDaemon and because bouncing a

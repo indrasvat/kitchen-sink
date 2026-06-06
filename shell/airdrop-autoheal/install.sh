@@ -26,8 +26,13 @@ PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 NEWSYSLOG="/etc/newsyslog.d/airdrop-autoheal.conf"
 LOGF="/var/log/airdrop-autoheal.log"
 ERRF="/var/log/airdrop-autoheal.err"
-REPO_URL="https://github.com/indrasvat/kitchen-sink.git"
 REPO_SUBDIR="shell/airdrop-autoheal"
+# Artifact source. Defaults to main; override to install from a branch/tag with
+# NO code change (handy for testing a PR branch):
+#   curl -fsSL <…>/<ref>/install.sh | sudo AIRDROP_AUTOHEAL_REF=<ref> bash
+# or point at a fully custom base with AIRDROP_AUTOHEAL_RAW_BASE.
+REPO_REF="${AIRDROP_AUTOHEAL_REF:-main}"
+RAW_BASE="${AIRDROP_AUTOHEAL_RAW_BASE:-https://raw.githubusercontent.com/indrasvat/kitchen-sink/${REPO_REF}/${REPO_SUBDIR}}"
 
 ACTION="install"
 SRC_DIR=""
@@ -150,15 +155,22 @@ locate_artifacts() {
         _done "Using local artifacts ${DIM}(${dir})${RST}"
         return 0
     fi
-    command -v git >/dev/null 2>&1 || { _fail "git required to fetch artifacts"; exit 1; }
-    local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/airdrop-autoheal-install.XXXXXX")"; CLEANUP_DIR="$tmp"
-    _step "Fetching artifacts (sparse checkout)…"
-    if ! git clone --depth 1 --filter=blob:none --sparse "$REPO_URL" "$tmp/repo" >/dev/null 2>&1; then
-        _fail "git clone failed"; exit 1
+    command -v curl >/dev/null 2>&1 || { _fail "curl required to fetch artifacts"; exit 1; }
+    local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/airdrop-autoheal-install.XXXXXX")" || { _fail "mktemp failed"; exit 1; }
+    CLEANUP_DIR="$tmp"
+    _step "Fetching artifacts…"
+    # Plain HTTPS downloads — NOT git — so a user's url.insteadOf SSH rewrite or
+    # a missing root known_hosts can't break the curl|sudo bash install path.
+    local f
+    for f in airdrop-autoheal.sh doctor.sh "${LABEL}.plist"; do
+        if ! curl -fsSL "${RAW_BASE}/${f}" -o "${tmp}/${f}"; then
+            _fail "download failed: ${f}"; exit 1
+        fi
+    done
+    if ! head -1 "${tmp}/airdrop-autoheal.sh" 2>/dev/null | grep -q '^#!/bin/bash'; then
+        _fail "fetched airdrop-autoheal.sh looks wrong (truncated/HTML?)"; exit 1
     fi
-    git -C "$tmp/repo" sparse-checkout set "$REPO_SUBDIR" >/dev/null 2>&1
-    SRC_DIR="$tmp/repo/$REPO_SUBDIR"
-    [ -f "$SRC_DIR/airdrop-autoheal.sh" ] || { _fail "artifacts missing after clone"; exit 1; }
+    SRC_DIR="$tmp"
     _done "Artifacts fetched"
 }
 
