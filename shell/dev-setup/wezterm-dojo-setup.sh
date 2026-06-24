@@ -156,8 +156,11 @@ preflight(){
 
 # ── step 1: WezTerm nightly ───────────────────────────────────────────────────
 ensure_cli(){
-  local bin="$1/Contents/MacOS/wezterm" d brew_bin dirs seen
-  have wezterm && return 0
+  local bin="$1/Contents/MacOS/wezterm" d brew_bin dirs seen current current_real bin_real
+  current="$(command -v wezterm 2>/dev/null || true)"
+  current_real="$(realpath "$current" 2>/dev/null || true)"
+  bin_real="$(realpath "$bin" 2>/dev/null || printf '%s' "$bin")"
+  [ -n "$current_real" ] && [ "$current_real" = "$bin_real" ] && return 0
   dirs="$HOME/.local/bin"
   if have brew; then
     brew_bin="$(brew --prefix 2>/dev/null)/bin"
@@ -295,17 +298,21 @@ stow_wezterm(){
   step "Dotfiles install  (${STOW_PACKAGE} → ~/.config/wezterm)"
   $SKIP_DOTFILES && { info "skipped (--skip-dotfiles)"; return 0; }
   local pkg="$DOTFILES_DIR/$STOW_PACKAGE"
-  [ -d "$pkg" ] || { fail "package '$STOW_PACKAGE' not found in $DOTFILES_DIR (clone failed?)"; return 1; }
-  [ -f "$DOTFILES_DIR/install.sh" ] || { fail "dotfiles installer not found: $DOTFILES_DIR/install.sh"; return 1; }
   if $DRY; then
-    if NO_COLOR=1 bash "$DOTFILES_DIR/install.sh" --dry-run --packages "$STOW_PACKAGE" --force >/dev/null; then
-      ok "[dry-run] dotfiles installer can adopt $STOW_PACKAGE"
+    if [ -d "$pkg" ] && [ -f "$DOTFILES_DIR/install.sh" ]; then
+      if NO_COLOR=1 bash "$DOTFILES_DIR/install.sh" --dry-run --packages "$STOW_PACKAGE" --force >/dev/null; then
+        ok "[dry-run] dotfiles installer can adopt $STOW_PACKAGE"
+      else
+        fail "[dry-run] dotfiles installer rejected $STOW_PACKAGE"
+        return 1
+      fi
     else
-      fail "[dry-run] dotfiles installer rejected $STOW_PACKAGE"
-      return 1
+      ok "[dry-run] would run dotfiles installer after cloning $DOTFILES_REPO"
     fi
     return 0
   fi
+  [ -d "$pkg" ] || { fail "package '$STOW_PACKAGE' not found in $DOTFILES_DIR (clone failed?)"; return 1; }
+  [ -f "$DOTFILES_DIR/install.sh" ] || { fail "dotfiles installer not found: $DOTFILES_DIR/install.sh"; return 1; }
   if NO_COLOR=1 bash "$DOTFILES_DIR/install.sh" --packages "$STOW_PACKAGE" --force >/dev/null; then
     ok "installed $STOW_PACKAGE via dotfiles installer"
   else
