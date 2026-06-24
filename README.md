@@ -55,6 +55,7 @@ One-command development environment setup scripts.
 | [`yantraganana.sh`](shell/dev-setup/yantraganana.sh) | Capture full macOS dev environment inventory as JSON |
 | [`saamagri.sh`](shell/dev-setup/saamagri.sh) | Replay an inventory JSON to set up a fresh Mac |
 | [`gameboy-dev-setup-macos.sh`](shell/dev-setup/gameboy-dev-setup-macos.sh) | Complete Game Boy development environment (GBDK-2020, RGBDS, emulators) |
+| [`wezterm-dojo-setup.sh`](shell/dev-setup/wezterm-dojo-setup.sh) | Reproduce the WezTerm setup: nightly app, Nerd Font, dotfiles stow package, plugins |
 | [`setup-modern-emacs/`](shell/dev-setup/setup-modern-emacs/) | Modern Emacs setup with Homebrew, LSP, tree-sitter |
 
 #### सामग्री (Sāmagrī)
