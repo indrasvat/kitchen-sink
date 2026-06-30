@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/indrasvat/sarasa/internal/jsonutil"
@@ -152,6 +153,10 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		log.Info("No outdated packages", "action", "upgrade")
 		return result, nil
 	}
+	brewPath, err := process.LookPath("brew")
+	if err != nil {
+		return nil, err
+	}
 
 	// Log outdated packages
 	names := make([]string, len(outdated))
@@ -172,7 +177,7 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 			result.Skipped = append(result.Skipped, pkg)
 			continue
 		}
-		if reason := b.deferReason(ctx, pkg); reason != "" {
+		if reason := b.deferReason(ctx, brewPath, pkg); reason != "" {
 			pkg.SkipReason = reason
 			logger.LogSkipped(b.Name(), pkg.Name, reason)
 			result.Skipped = append(result.Skipped, pkg)
@@ -182,10 +187,7 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		start := time.Now()
 		args := append([]string{"upgrade"}, brewKindArg(pkg)...)
 		args = append(args, pkg.Name)
-		cmd := exec.CommandContext(ctx, "brew", args...)
-		if brewPath, err := process.LookPath("brew"); err == nil {
-			cmd = exec.CommandContext(ctx, brewPath, args...)
-		}
+		cmd := exec.CommandContext(ctx, brewPath, args...)
 		process.Configure(cmd, brewEnv())
 		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
@@ -213,7 +215,7 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		}
 
 		// Verify upgrade by checking installed version
-		newVersion, verifyErr := b.getInstalledVersion(ctx, pkg)
+		newVersion, verifyErr := b.getInstalledVersion(ctx, brewPath, pkg)
 		if verifyErr != nil {
 			log.Warn("Could not verify upgrade",
 				"package", pkg.Name,
@@ -242,11 +244,7 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 }
 
 // getInstalledVersion returns the currently installed version of a brew package.
-func (b *Brew) getInstalledVersion(ctx context.Context, pkg Package) (string, error) {
-	brewPath, err := process.LookPath("brew")
-	if err != nil {
-		return "", err
-	}
+func (b *Brew) getInstalledVersion(ctx context.Context, brewPath string, pkg Package) (string, error) {
 	args := append([]string{"info", "--json=v2"}, brewKindArg(pkg)...)
 	args = append(args, pkg.Name)
 	cmd := exec.CommandContext(ctx, brewPath, args...)
@@ -327,11 +325,11 @@ func brewEnv() map[string]string {
 	}
 }
 
-func (b *Brew) deferReason(ctx context.Context, pkg Package) string {
+func (b *Brew) deferReason(ctx context.Context, brewPath string, pkg Package) string {
 	if pkg.Method != brewMethodCask {
 		return ""
 	}
-	targetDirs, err := b.caskAppTargetDirs(ctx, pkg.Name)
+	targetDirs, err := b.caskAppTargetDirs(ctx, brewPath, pkg.Name)
 	if err != nil {
 		if !dirWritable(brewAppDir) {
 			return "cask app target requires admin/write access"
@@ -346,11 +344,7 @@ func (b *Brew) deferReason(ctx context.Context, pkg Package) string {
 	return ""
 }
 
-func (b *Brew) caskAppTargetDirs(ctx context.Context, name string) ([]string, error) {
-	brewPath, err := process.LookPath("brew")
-	if err != nil {
-		return nil, err
-	}
+func (b *Brew) caskAppTargetDirs(ctx context.Context, brewPath, name string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, brewPath, "info", "--json=v2", "--cask", name)
 	process.Configure(cmd, brewEnv())
 	output, err := cmd.Output()
@@ -377,12 +371,20 @@ func (b *Brew) caskAppTargetDirs(ctx context.Context, name string) ([]string, er
 			if targetRaw, ok := artifact["target"]; ok {
 				var target string
 				if err := json.Unmarshal(targetRaw, &target); err == nil && target != "" {
-					targetDir = caskTargetDir(target)
+					if resolvedTargetDir, ok := caskTargetDir(target); ok {
+						targetDir = resolvedTargetDir
+					} else {
+						continue
+					}
 				}
 			}
 			if appRaw, ok := artifact["app"]; ok && targetDir == brewAppDir {
 				if nestedTarget := nestedAppTarget(appRaw); nestedTarget != "" {
-					targetDir = caskTargetDir(nestedTarget)
+					if resolvedTargetDir, ok := caskTargetDir(nestedTarget); ok {
+						targetDir = resolvedTargetDir
+					} else {
+						continue
+					}
 				}
 			}
 			targetDirs = append(targetDirs, targetDir)
@@ -422,14 +424,8 @@ func brewDeferredReason(pkg Package, output string) string {
 }
 
 func dirWritable(path string) bool {
-	file, err := os.CreateTemp(path, ".sarasa-write-test-*")
-	if err != nil {
-		return false
-	}
-	name := file.Name()
-	_ = file.Close()
-	_ = os.Remove(name)
-	return true
+	const writable = 2 // POSIX W_OK
+	return syscall.Access(path, writable) == nil
 }
 
 func expandHomePath(path string) string {
@@ -444,12 +440,51 @@ func expandHomePath(path string) string {
 	return path
 }
 
-func caskTargetDir(target string) string {
-	target = expandHomePath(target)
-	if filepath.IsAbs(target) {
-		return filepath.Dir(target)
+func expandBrewTargetPath(path string) (string, bool) {
+	path = expandHomePath(path)
+	replacements := map[string]string{
+		"$HOME":              homeDir(),
+		"${HOME}":            homeDir(),
+		"$APPDIR":            brewAppDir,
+		"${APPDIR}":          brewAppDir,
+		"$HOMEBREW_PREFIX":   homebrewPrefix(),
+		"${HOMEBREW_PREFIX}": homebrewPrefix(),
 	}
-	return brewAppDir
+	for token, value := range replacements {
+		if value != "" {
+			path = strings.ReplaceAll(path, token, value)
+		}
+	}
+	if strings.Contains(path, "$") {
+		return "", false
+	}
+	return path, true
+}
+
+func caskTargetDir(target string) (string, bool) {
+	target, ok := expandBrewTargetPath(target)
+	if !ok {
+		return "", false
+	}
+	if filepath.IsAbs(target) {
+		return filepath.Dir(target), true
+	}
+	return brewAppDir, true
+}
+
+func homeDir() string {
+	homeDir, _ := os.UserHomeDir()
+	return homeDir
+}
+
+func homebrewPrefix() string {
+	if prefix := strings.TrimSpace(os.Getenv("HOMEBREW_PREFIX")); prefix != "" {
+		return prefix
+	}
+	if _, err := os.Stat("/opt/homebrew"); err == nil {
+		return "/opt/homebrew"
+	}
+	return "/usr/local"
 }
 
 func nestedAppTarget(raw json.RawMessage) string {

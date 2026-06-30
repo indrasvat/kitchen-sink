@@ -26,10 +26,10 @@ JSON
 	t.Setenv("PATH", brewDir)
 
 	b := NewBrew(&Options{}).(*Brew)
-	if got := b.deferReason(context.Background(), Package{Name: "iterm2", Method: brewMethodCask}); got == "" {
+	if got := b.deferReason(context.Background(), brewPath, Package{Name: "iterm2", Method: brewMethodCask}); got == "" {
 		t.Fatal("expected cask to be deferred when app dir is not writable")
 	}
-	if got := b.deferReason(context.Background(), Package{Name: "git", Method: brewMethodFormula}); got != "" {
+	if got := b.deferReason(context.Background(), brewPath, Package{Name: "git", Method: brewMethodFormula}); got != "" {
 		t.Fatal("expected formula to remain upgradeable")
 	}
 }
@@ -47,7 +47,7 @@ JSON
 	t.Setenv("PATH", brewDir)
 
 	b := NewBrew(&Options{}).(*Brew)
-	if got := b.deferReason(context.Background(), Package{Name: "tool-cask", Method: brewMethodCask}); got != "" {
+	if got := b.deferReason(context.Background(), brewPath, Package{Name: "tool-cask", Method: brewMethodCask}); got != "" {
 		t.Fatal("expected non-app cask to remain upgradeable")
 	}
 }
@@ -70,7 +70,7 @@ JSON
 	t.Setenv("PATH", brewDir)
 
 	b := NewBrew(&Options{}).(*Brew)
-	got, err := b.caskAppTargetDirs(context.Background(), "foo")
+	got, err := b.caskAppTargetDirs(context.Background(), brewPath, "foo")
 	if err != nil {
 		t.Fatalf("caskAppTargetDirs failed: %v", err)
 	}
@@ -93,12 +93,31 @@ JSON
 	t.Setenv("PATH", brewDir)
 
 	b := NewBrew(&Options{}).(*Brew)
-	got, err := b.caskAppTargetDirs(context.Background(), "foo")
+	got, err := b.caskAppTargetDirs(context.Background(), brewPath, "foo")
 	if err != nil {
 		t.Fatalf("caskAppTargetDirs failed: %v", err)
 	}
 	if len(got) != 1 || got[0] != userAppDir {
 		t.Fatalf("target dirs = %v, want [%s]", got, userAppDir)
+	}
+}
+
+func TestCaskTargetDirExpandsKnownTokens(t *testing.T) {
+	prefix := t.TempDir()
+	t.Setenv("HOMEBREW_PREFIX", prefix)
+
+	got, ok := caskTargetDir("$HOMEBREW_PREFIX/bin/fig")
+	if !ok {
+		t.Fatal("expected HOMEBREW_PREFIX target to resolve")
+	}
+	if got != filepath.Join(prefix, "bin") {
+		t.Fatalf("target dir = %q, want %q", got, filepath.Join(prefix, "bin"))
+	}
+}
+
+func TestCaskTargetDirRejectsUnknownTokens(t *testing.T) {
+	if got, ok := caskTargetDir("$UNKNOWN_APPDIR/Foo.app"); ok {
+		t.Fatalf("unknown token resolved to %q", got)
 	}
 }
 
