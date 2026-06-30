@@ -79,6 +79,29 @@ JSON
 	}
 }
 
+func TestCaskAppTargetDirsPreservesResolvedTopLevelTarget(t *testing.T) {
+	userAppDir := t.TempDir()
+	brewDir := t.TempDir()
+	brewPath := filepath.Join(brewDir, "brew")
+	if err := os.WriteFile(brewPath, []byte(fmt.Sprintf(`#!/bin/sh
+cat <<'JSON'
+{"casks":[{"artifacts":[{"app":["Foo.app",{"target":"Bar.app"}],"target":%q}]}]}
+JSON
+`, filepath.Join(userAppDir, "Bar.app"))), 0755); err != nil {
+		t.Fatalf("write fake brew: %v", err)
+	}
+	t.Setenv("PATH", brewDir)
+
+	b := NewBrew(&Options{}).(*Brew)
+	got, err := b.caskAppTargetDirs(context.Background(), "foo")
+	if err != nil {
+		t.Fatalf("caskAppTargetDirs failed: %v", err)
+	}
+	if len(got) != 1 || got[0] != userAppDir {
+		t.Fatalf("target dirs = %v, want [%s]", got, userAppDir)
+	}
+}
+
 func TestBrewKindArg(t *testing.T) {
 	tests := []struct {
 		name string

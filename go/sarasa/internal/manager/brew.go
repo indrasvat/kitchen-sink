@@ -380,7 +380,7 @@ func (b *Brew) caskAppTargetDirs(ctx context.Context, name string) ([]string, er
 					targetDir = caskTargetDir(target)
 				}
 			}
-			if appRaw, ok := artifact["app"]; ok {
+			if appRaw, ok := artifact["app"]; ok && targetDir == brewAppDir {
 				if nestedTarget := nestedAppTarget(appRaw); nestedTarget != "" {
 					targetDir = caskTargetDir(nestedTarget)
 				}
