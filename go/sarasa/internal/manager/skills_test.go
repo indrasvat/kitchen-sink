@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,172 +10,162 @@ import (
 
 const testSkillGhGhent = "gh-ghent"
 
-func TestParseSkillsCheckOutput_Empty(t *testing.T) {
-	packages, unparsed := parseSkillsCheckOutput("")
-	if len(packages) != 0 {
-		t.Errorf("expected 0 packages, got %d", len(packages))
+func TestSkillsCheckOutdatedUnsupported(t *testing.T) {
+	m := NewSkills(&Options{})
+
+	got, err := m.CheckOutdated(context.Background())
+	if !errors.Is(err, errSkillsReadOnlyCheckUnsupported) {
+		t.Fatalf("expected unsupported check error, got %v", err)
 	}
-	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d", len(unparsed))
+	if got != nil {
+		t.Fatalf("expected nil package list, got %v", got)
 	}
 }
 
-func TestParseSkillsCheckOutput_NoUpdates(t *testing.T) {
+func TestSkillsDryRunUnsupported(t *testing.T) {
+	m := NewSkills(&Options{})
+
+	got, err := m.Upgrade(context.Background(), true)
+	if !errors.Is(err, errSkillsReadOnlyCheckUnsupported) {
+		t.Fatalf("expected unsupported dry-run error, got %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(got.Upgraded) != 0 || len(got.Failed) != 0 || len(got.Skipped) != 0 {
+		t.Fatalf("expected empty result, got %+v", got)
+	}
+}
+
+func TestSkillsUpdateArgs_GlobalNonInteractive(t *testing.T) {
+	got := skillsUpdateArgs(nil)
+	expected := []string{"update", "--global", "--yes"}
+	assertStringSliceEqual(t, got, expected)
+}
+
+func TestSkillsUpdateArgs_WithSpecificSkills(t *testing.T) {
+	got := skillsUpdateArgs([]string{"cass", testSkillGhGhent})
+	expected := []string{"update", "--global", "--yes", "cass", testSkillGhGhent}
+	assertStringSliceEqual(t, got, expected)
+}
+
+func TestSkillsUpdateTargetsHonorsSkipList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	lockPath := filepath.Join(home, ".agents", ".skill-lock.json")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := `{
+  "version": 3,
+  "skills": {
+    "shux": {},
+    "cass": {},
+    "gh-ghent": {}
+  }
+}`
+	if err := os.WriteFile(lockPath, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Skills{opts: &Options{SkipList: []string{"shux"}}}
+	targets, skipped, err := m.updateTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertStringSliceEqual(t, targets, []string{"cass", testSkillGhGhent})
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped package, got %v", skipped)
+	}
+	if skipped[0].Name != "shux" || skipped[0].SkipReason != "in skip list" {
+		t.Fatalf("unexpected skipped package: %+v", skipped[0])
+	}
+}
+
+func TestParseSkillsUpdateOutput_NoUpdates(t *testing.T) {
 	output := `Checking for skill updates...
-Checking 5 skill(s) for updates...
 
-All skills are up to date`
+Checking skills from source: indrasvat/shux
+✓ All global skills are up to date`
 
-	packages, unparsed := parseSkillsCheckOutput(output)
-	if len(packages) != 0 {
-		t.Errorf("expected 0 packages, got %d", len(packages))
-	}
-	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d", len(unparsed))
+	upgraded, failed, skipped, unparsed := parseSkillsUpdateOutput(output)
+	if len(upgraded) != 0 || len(failed) != 0 || len(skipped) != 0 || len(unparsed) != 0 {
+		t.Fatalf("expected empty result, got upgraded=%v failed=%v skipped=%v unparsed=%v", upgraded, failed, skipped, unparsed)
 	}
 }
 
-func TestParseSkillsCheckOutput_SingleUpdate(t *testing.T) {
+func TestParseSkillsUpdateOutput_UpdatedAndFailed(t *testing.T) {
 	output := `Checking for skill updates...
-Checking 10 skill(s) for updates...
 
-1 update(s) available:
+Found 2 global update(s)
 
-  ↑ gh-ghent
-    source: indrasvat/gh-ghent
+Updating cass...
+  ✓ Updated cass
+Updating gh-ghent...
+  ✗ Failed to update gh-ghent
 
-Run npx skills update to update all skills`
+✓ Updated 1 skill(s)
+Failed to update 1 skill(s)`
 
-	packages, unparsed := parseSkillsCheckOutput(output)
-	if len(packages) != 1 {
-		t.Fatalf("expected 1 package, got %d", len(packages))
+	upgraded, failed, skipped, unparsed := parseSkillsUpdateOutput(output)
+	if len(upgraded) != 1 {
+		t.Fatalf("expected 1 upgraded package, got %v", upgraded)
 	}
-	if packages[0].Name != testSkillGhGhent {
-		t.Errorf("expected name=gh-ghent, got %s", packages[0].Name)
+	if upgraded[0].Name != "cass" {
+		t.Fatalf("expected cass upgraded, got %s", upgraded[0].Name)
 	}
-	if packages[0].Current != "indrasvat/gh-ghent" {
-		t.Errorf("expected current=indrasvat/gh-ghent, got %s", packages[0].Current)
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failed package, got %v", failed)
 	}
-	if packages[0].Latest != "update available" {
-		t.Errorf("expected latest='update available', got %s", packages[0].Latest)
+	if failed[0].Name != testSkillGhGhent {
+		t.Fatalf("expected gh-ghent failed, got %s", failed[0].Name)
 	}
-	if packages[0].IsMajor {
-		t.Error("expected IsMajor=false")
+	if len(skipped) != 0 {
+		t.Fatalf("expected 0 skipped packages, got %v", skipped)
 	}
 	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d: %v", len(unparsed), unparsed)
+		t.Fatalf("expected 0 unparsed lines, got %v", unparsed)
 	}
 }
 
-func TestParseSkillsCheckOutput_MultipleUpdates(t *testing.T) {
+func TestParseSkillsUpdateOutput_SkippedUncheckable(t *testing.T) {
 	output := `Checking for skill updates...
-Checking 21 skill(s) for updates...
 
-2 update(s) available:
+2 skill(s) cannot be checked automatically:
+  • local-one (Local path)
+  • legacy-one, legacy-two (No skill path recorded)
+    To update: npx skills add owner/repo -g -y`
 
-  ↑ cass
-    source: Dicklesworthstone/coding_agent_session_search
-  ↑ gh-ghent
-    source: indrasvat/gh-ghent
-
-Run npx skills update to update all skills`
-
-	packages, unparsed := parseSkillsCheckOutput(output)
-	if len(packages) != 2 {
-		t.Fatalf("expected 2 packages, got %d", len(packages))
+	upgraded, failed, skipped, unparsed := parseSkillsUpdateOutput(output)
+	if len(upgraded) != 0 || len(failed) != 0 {
+		t.Fatalf("expected no upgraded/failed packages, got upgraded=%v failed=%v", upgraded, failed)
 	}
-	if packages[0].Name != "cass" {
-		t.Errorf("expected first name=cass, got %s", packages[0].Name)
+	if len(skipped) != 3 {
+		t.Fatalf("expected 3 skipped packages, got %v", skipped)
 	}
-	if packages[0].Current != "Dicklesworthstone/coding_agent_session_search" {
-		t.Errorf("expected first source=Dicklesworthstone/coding_agent_session_search, got %s", packages[0].Current)
+	if skipped[0].Name != "local-one" || skipped[0].SkipReason != "Local path" {
+		t.Fatalf("unexpected first skipped package: %+v", skipped[0])
 	}
-	if packages[1].Name != testSkillGhGhent {
-		t.Errorf("expected second name=gh-ghent, got %s", packages[1].Name)
+	if skipped[1].Name != "legacy-one" || skipped[2].Name != "legacy-two" {
+		t.Fatalf("unexpected grouped skipped packages: %+v", skipped)
 	}
 	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d: %v", len(unparsed), unparsed)
+		t.Fatalf("expected 0 unparsed lines, got %v", unparsed)
 	}
 }
 
-func TestParseSkillsCheckOutput_WithErrorSection(t *testing.T) {
-	// Real-world output: updates + "could not check" entries
+func TestParseSkillsUpdateOutput_DeletedUpstreamWarning(t *testing.T) {
 	output := `Checking for skill updates...
-Checking 21 skill(s) for updates...
 
-2 update(s) available:
+Warning: The following skills from google-labs-code/stitch-skills appear to have been deleted upstream:
+  • react:components
+Skipping deletion in non-interactive mode.
+✓ All global skills are up to date`
 
-  ↑ cass
-    source: Dicklesworthstone/coding_agent_session_search
-  ↑ gh-ghent
-    source: indrasvat/gh-ghent
-
-Run npx skills update to update all skills
-
-Could not check 1 skill(s) (may need reinstall)
-
-  ✗ hugging-face-paper-pages
-    source: huggingface/skills`
-
-	packages, unparsed := parseSkillsCheckOutput(output)
-	if len(packages) != 2 {
-		t.Fatalf("expected 2 packages (errors excluded), got %d", len(packages))
-	}
-	if packages[0].Name != "cass" {
-		t.Errorf("expected first name=cass, got %s", packages[0].Name)
-	}
-	if packages[1].Name != testSkillGhGhent {
-		t.Errorf("expected second name=gh-ghent, got %s", packages[1].Name)
-	}
-	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d: %v", len(unparsed), unparsed)
-	}
-}
-
-func TestParseSkillsCheckOutput_WithANSICodes(t *testing.T) {
-	// Output with ANSI color codes wrapped around text
-	output := "\033[1mChecking for skill updates...\033[0m\n" +
-		"Checking 5 skill(s) for updates...\n\n" +
-		"\033[32m1 update(s) available:\033[0m\n\n" +
-		"  \033[33m↑\033[0m \033[1mmy-skill\033[0m\n" +
-		"    source: owner/repo\n\n" +
-		"Run npx skills update to update all skills"
-
-	packages, unparsed := parseSkillsCheckOutput(output)
-	if len(packages) != 1 {
-		t.Fatalf("expected 1 package, got %d", len(packages))
-	}
-	if packages[0].Name != "my-skill" {
-		t.Errorf("expected name=my-skill, got %s", packages[0].Name)
-	}
-	if packages[0].Current != "owner/repo" {
-		t.Errorf("expected current=owner/repo, got %s", packages[0].Current)
-	}
-	if len(unparsed) != 0 {
-		t.Errorf("expected 0 unparsed, got %d: %v", len(unparsed), unparsed)
-	}
-}
-
-func TestParseSkillsCheckOutput_UpdateWithoutSource(t *testing.T) {
-	// Edge case: update entry with no following source line
-	output := `Checking for skill updates...
-Checking 3 skill(s) for updates...
-
-1 update(s) available:
-
-  ↑ orphan-skill
-
-Run npx skills update to update all skills`
-
-	packages, _ := parseSkillsCheckOutput(output)
-	if len(packages) != 1 {
-		t.Fatalf("expected 1 package, got %d", len(packages))
-	}
-	if packages[0].Name != "orphan-skill" {
-		t.Errorf("expected name=orphan-skill, got %s", packages[0].Name)
-	}
-	if packages[0].Current != customUnknown {
-		t.Errorf("expected current=unknown for orphan, got %s", packages[0].Current)
+	upgraded, failed, skipped, unparsed := parseSkillsUpdateOutput(output)
+	if len(upgraded) != 0 || len(failed) != 0 || len(skipped) != 0 || len(unparsed) != 0 {
+		t.Fatalf("expected warning-only output to parse cleanly, got upgraded=%v failed=%v skipped=%v unparsed=%v", upgraded, failed, skipped, unparsed)
 	}
 }
 
@@ -214,5 +206,17 @@ func TestSkillLockFilePath_XDG(t *testing.T) {
 	expected := filepath.Join("/tmp/xdg-test", "skills", ".skill-lock.json")
 	if path != expected {
 		t.Errorf("expected %s, got %s", expected, path)
+	}
+}
+
+func assertStringSliceEqual(t *testing.T, got, expected []string) {
+	t.Helper()
+	if len(got) != len(expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Fatalf("expected %v, got %v", expected, got)
+		}
 	}
 }

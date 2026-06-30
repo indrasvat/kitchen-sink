@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/indrasvat/sarasa/internal/logger"
+	"github.com/indrasvat/sarasa/internal/process"
 )
 
 const (
@@ -156,39 +157,7 @@ func DefaultConfig() (*Config, error) {
 // tools are commonly installed in user-local directories, so include those
 // explicitly along with the directory containing the sarasa binary.
 func DefaultEnvironmentPath(binaryPath string) string {
-	homeDir, _ := os.UserHomeDir()
-	candidates := []string{}
-	if dir := filepath.Dir(binaryPath); binaryPath != "" && dir != "." {
-		candidates = append(candidates, dir)
-	}
-	if homeDir != "" {
-		candidates = append(candidates,
-			filepath.Join(homeDir, ".local", "bin"),
-			filepath.Join(homeDir, "bin"),
-			filepath.Join(homeDir, "go", "bin"),
-		)
-	}
-	candidates = append(candidates, filepath.SplitList(os.Getenv("PATH"))...)
-	candidates = append(candidates,
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		"/usr/bin",
-		"/bin",
-		"/usr/sbin",
-		"/sbin",
-	)
-
-	seen := make(map[string]bool, len(candidates))
-	path := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" || !filepath.IsAbs(candidate) || seen[candidate] {
-			continue
-		}
-		seen[candidate] = true
-		path = append(path, candidate)
-	}
-	return strings.Join(path, ":")
+	return process.DefaultPath(binaryPath)
 }
 
 // GeneratePlist generates the launchd plist content.

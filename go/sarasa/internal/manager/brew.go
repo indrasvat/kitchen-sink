@@ -2,13 +2,18 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
+	"github.com/indrasvat/sarasa/internal/process"
 )
 
 func init() {
@@ -19,6 +24,13 @@ func init() {
 type Brew struct {
 	opts *Options
 }
+
+const (
+	brewMethodFormula = "formula"
+	brewMethodCask    = "cask"
+)
+
+var brewAppDir = "/Applications"
 
 // NewBrew creates a new Homebrew manager.
 func NewBrew(opts *Options) Manager {
@@ -32,7 +44,7 @@ func (b *Brew) Name() string {
 }
 
 func (b *Brew) IsAvailable() bool {
-	_, err := exec.LookPath("brew")
+	_, err := process.LookPath("brew")
 	return err == nil
 }
 
@@ -60,8 +72,14 @@ type brewCask struct {
 }
 
 func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
+	brewPath, err := process.LookPath("brew")
+	if err != nil {
+		return nil, err
+	}
+
 	// First run brew update
-	updateCmd := exec.CommandContext(ctx, "brew", "update")
+	updateCmd := exec.CommandContext(ctx, brewPath, "update")
+	process.Configure(updateCmd, brewEnv())
 	if err := updateCmd.Run(); err != nil {
 		return nil, fmt.Errorf("brew update failed: %w", err)
 	}
@@ -72,7 +90,8 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		args = append(args, "--greedy")
 	}
 
-	cmd := exec.CommandContext(ctx, "brew", args...)
+	cmd := exec.CommandContext(ctx, brewPath, args...)
+	process.Configure(cmd, brewEnv())
 	output, err := cmd.Output()
 	if err != nil {
 		// brew outdated returns exit code 0 even with outdated packages
@@ -101,6 +120,7 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 			Name:    f.Name,
 			Current: f.InstalledVersions.First(),
 			Latest:  f.CurrentVersion,
+			Method:  brewMethodFormula,
 		})
 	}
 
@@ -113,6 +133,7 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 			Name:    c.Name,
 			Current: c.InstalledVersions.First(),
 			Latest:  c.CurrentVersion,
+			Method:  brewMethodCask,
 		})
 	}
 
@@ -131,6 +152,10 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 	if len(outdated) == 0 {
 		log.Info("No outdated packages", "action", "upgrade")
 		return result, nil
+	}
+	brewPath, err := process.LookPath("brew")
+	if err != nil {
+		return nil, err
 	}
 
 	// Log outdated packages
@@ -152,13 +177,33 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 			result.Skipped = append(result.Skipped, pkg)
 			continue
 		}
+		if reason := b.deferReason(ctx, brewPath, pkg); reason != "" {
+			pkg.SkipReason = reason
+			logger.LogSkipped(b.Name(), pkg.Name, reason)
+			result.Skipped = append(result.Skipped, pkg)
+			continue
+		}
 
 		start := time.Now()
-		cmd := exec.CommandContext(ctx, "brew", "upgrade", pkg.Name)
+		args := append([]string{"upgrade"}, brewKindArg(pkg)...)
+		args = append(args, pkg.Name)
+		cmd := exec.CommandContext(ctx, brewPath, args...)
+		process.Configure(cmd, brewEnv())
 		output, err := cmd.CombinedOutput()
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
+			if reason := brewDeferredReason(pkg, string(output)); reason != "" {
+				log.Warn("brew upgrade deferred",
+					"package", pkg.Name,
+					"reason", reason,
+					"output", string(output),
+				)
+				pkg.SkipReason = reason
+				logger.LogSkipped(b.Name(), pkg.Name, reason)
+				result.Skipped = append(result.Skipped, pkg)
+				continue
+			}
 			log.Error("brew upgrade failed",
 				"package", pkg.Name,
 				"error", err.Error(),
@@ -170,7 +215,7 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		}
 
 		// Verify upgrade by checking installed version
-		newVersion, verifyErr := b.getInstalledVersion(ctx, pkg.Name)
+		newVersion, verifyErr := b.getInstalledVersion(ctx, brewPath, pkg)
 		if verifyErr != nil {
 			log.Warn("Could not verify upgrade",
 				"package", pkg.Name,
@@ -199,8 +244,11 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 }
 
 // getInstalledVersion returns the currently installed version of a brew package.
-func (b *Brew) getInstalledVersion(ctx context.Context, name string) (string, error) {
-	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", name)
+func (b *Brew) getInstalledVersion(ctx context.Context, brewPath string, pkg Package) (string, error) {
+	args := append([]string{"info", "--json=v2"}, brewKindArg(pkg)...)
+	args = append(args, pkg.Name)
+	cmd := exec.CommandContext(ctx, brewPath, args...)
+	process.Configure(cmd, brewEnv())
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -238,20 +286,27 @@ func (b *Brew) Cleanup(ctx context.Context) error {
 	log := logger.WithManager(b.Name())
 
 	// Get current cache size before cleanup
-	duCmd := exec.CommandContext(ctx, "brew", "--cache")
+	brewPath, err := process.LookPath("brew")
+	if err != nil {
+		return err
+	}
+	duCmd := exec.CommandContext(ctx, brewPath, "--cache")
+	process.Configure(duCmd, brewEnv())
 	cacheDir, err := duCmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to get cache dir: %w", err)
 	}
 
 	// Run cleanup
-	cleanupCmd := exec.CommandContext(ctx, "brew", "cleanup")
+	cleanupCmd := exec.CommandContext(ctx, brewPath, "cleanup")
+	process.Configure(cleanupCmd, brewEnv())
 	if err := cleanupCmd.Run(); err != nil {
 		return fmt.Errorf("brew cleanup failed: %w", err)
 	}
 
 	// Run autoremove
-	autoremoveCmd := exec.CommandContext(ctx, "brew", "autoremove")
+	autoremoveCmd := exec.CommandContext(ctx, brewPath, "autoremove")
+	process.Configure(autoremoveCmd, brewEnv())
 	if err := autoremoveCmd.Run(); err != nil {
 		log.Warn("brew autoremove failed", "error", err.Error())
 	}
@@ -261,4 +316,190 @@ func (b *Brew) Cleanup(ctx context.Context) error {
 	_ = strings.TrimSpace(string(cacheDir))
 
 	return nil
+}
+
+func brewEnv() map[string]string {
+	return map[string]string{
+		"HOMEBREW_NO_ASK":       "1",
+		"HOMEBREW_NO_ENV_HINTS": "1",
+	}
+}
+
+func (b *Brew) deferReason(ctx context.Context, brewPath string, pkg Package) string {
+	if pkg.Method != brewMethodCask {
+		return ""
+	}
+	targetDirs, err := b.caskAppTargetDirs(ctx, brewPath, pkg.Name)
+	if err != nil {
+		if !dirWritable(brewAppDir) {
+			return "cask app target requires admin/write access"
+		}
+		return ""
+	}
+	for _, targetDir := range targetDirs {
+		if !dirWritable(targetDir) {
+			return "cask app target requires admin/write access"
+		}
+	}
+	return ""
+}
+
+func (b *Brew) caskAppTargetDirs(ctx context.Context, brewPath, name string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, brewPath, "info", "--json=v2", "--cask", name)
+	process.Configure(cmd, brewEnv())
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Casks []struct {
+			Artifacts []map[string]json.RawMessage `json:"artifacts"`
+		} `json:"casks"`
+	}
+	if err := jsonutil.Parse("brew", "info", output, &result); err != nil {
+		return nil, err
+	}
+
+	var targetDirs []string
+	for _, cask := range result.Casks {
+		for _, artifact := range cask.Artifacts {
+			if _, ok := artifact["app"]; !ok {
+				continue
+			}
+			targetDir := brewAppDir
+			if targetRaw, ok := artifact["target"]; ok {
+				var target string
+				if err := json.Unmarshal(targetRaw, &target); err == nil && target != "" {
+					if resolvedTargetDir, ok := caskTargetDir(target); ok {
+						targetDir = resolvedTargetDir
+					} else {
+						continue
+					}
+				}
+			}
+			if appRaw, ok := artifact["app"]; ok && targetDir == brewAppDir {
+				if nestedTarget := nestedAppTarget(appRaw); nestedTarget != "" {
+					if resolvedTargetDir, ok := caskTargetDir(nestedTarget); ok {
+						targetDir = resolvedTargetDir
+					} else {
+						continue
+					}
+				}
+			}
+			targetDirs = append(targetDirs, targetDir)
+		}
+	}
+	return targetDirs, nil
+}
+
+func brewKindArg(pkg Package) []string {
+	switch pkg.Method {
+	case brewMethodFormula:
+		return []string{"--formula"}
+	case brewMethodCask:
+		return []string{"--cask"}
+	default:
+		return nil
+	}
+}
+
+func brewDeferredReason(pkg Package, output string) string {
+	if pkg.Method != brewMethodCask {
+		return ""
+	}
+	text := strings.ToLower(output)
+	switch {
+	case strings.Contains(text, "sudo: a terminal is required") ||
+		strings.Contains(text, "sudo: a password is required") ||
+		strings.Contains(text, "which may request your password"):
+		return "requires sudo/admin credentials"
+	case strings.Contains(text, "there is already an app at"):
+		return "requires manual cask app cleanup or admin lease"
+	case strings.Contains(text, "refusing to load formula") && strings.Contains(text, "untrusted tap"):
+		return "requires explicit brew tap trust"
+	default:
+		return ""
+	}
+}
+
+func dirWritable(path string) bool {
+	const writable = 2 // POSIX W_OK
+	return syscall.Access(path, writable) == nil
+}
+
+func expandHomePath(path string) string {
+	if path == "~" {
+		homeDir, _ := os.UserHomeDir()
+		return homeDir
+	}
+	if strings.HasPrefix(path, "~/") {
+		homeDir, _ := os.UserHomeDir()
+		return filepath.Join(homeDir, path[2:])
+	}
+	return path
+}
+
+func expandBrewTargetPath(path string) (string, bool) {
+	path = expandHomePath(path)
+	replacements := map[string]string{
+		"$HOME":              homeDir(),
+		"${HOME}":            homeDir(),
+		"$APPDIR":            brewAppDir,
+		"${APPDIR}":          brewAppDir,
+		"$HOMEBREW_PREFIX":   homebrewPrefix(),
+		"${HOMEBREW_PREFIX}": homebrewPrefix(),
+	}
+	for token, value := range replacements {
+		if value != "" {
+			path = strings.ReplaceAll(path, token, value)
+		}
+	}
+	if strings.Contains(path, "$") {
+		return "", false
+	}
+	return path, true
+}
+
+func caskTargetDir(target string) (string, bool) {
+	target, ok := expandBrewTargetPath(target)
+	if !ok {
+		return "", false
+	}
+	if filepath.IsAbs(target) {
+		return filepath.Dir(target), true
+	}
+	return brewAppDir, true
+}
+
+func homeDir() string {
+	homeDir, _ := os.UserHomeDir()
+	return homeDir
+}
+
+func homebrewPrefix() string {
+	if prefix := strings.TrimSpace(os.Getenv("HOMEBREW_PREFIX")); prefix != "" {
+		return prefix
+	}
+	if _, err := os.Stat("/opt/homebrew"); err == nil {
+		return "/opt/homebrew"
+	}
+	return "/usr/local"
+}
+
+func nestedAppTarget(raw json.RawMessage) string {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return ""
+	}
+	for _, value := range values {
+		var options map[string]string
+		if err := json.Unmarshal(value, &options); err != nil {
+			continue
+		}
+		if target := strings.TrimSpace(options["target"]); target != "" {
+			return target
+		}
+	}
+	return ""
 }

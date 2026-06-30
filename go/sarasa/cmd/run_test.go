@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/indrasvat/sarasa/internal/config"
@@ -119,6 +122,60 @@ func TestRunJSONReportsManagerFailures(t *testing.T) {
 	}
 	if len(got.Managers) != 1 || got.Managers[0].Error != "upgrade failed" {
 		t.Fatalf("missing manager error: %+v", got.Managers)
+	}
+}
+
+func TestRunPlainNonDryRunShowsSkippedSummary(t *testing.T) {
+	oldDryRun := runDryRun
+	oldSkipCleanup := runSkipCleanup
+	runDryRun = false
+	runSkipCleanup = true
+	t.Cleanup(func() {
+		runDryRun = oldDryRun
+		runSkipCleanup = oldSkipCleanup
+	})
+
+	mgr := &fakeRunManager{
+		name:      "brew",
+		available: true,
+		upgrade: &manager.UpgradeResult{
+			Skipped: []manager.Package{{
+				Name:       "demo-cask",
+				Current:    "1.0.0",
+				Latest:     "1.1.0",
+				Method:     "cask",
+				SkipReason: "requires manual cask app cleanup or admin lease",
+			}},
+		},
+	}
+	cfg := config.DefaultConfig()
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writePipe
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err = runRunPlain([]manager.Manager{mgr}, &manager.Options{Config: cfg}, &configWrapper{cfg: cfg}, false)
+	_ = writePipe.Close()
+	outputBytes, readErr := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatalf("runRunPlain failed: %v", err)
+	}
+	if readErr != nil {
+		t.Fatalf("read stdout: %v", readErr)
+	}
+
+	output := string(outputBytes)
+	for _, want := range []string{"demo-cask", "skipped", "requires manual cask app cleanup or admin lease", "1 skipped"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "All up to date") {
+		t.Fatalf("skipped-only run should not report all up to date:\n%s", output)
 	}
 }
 

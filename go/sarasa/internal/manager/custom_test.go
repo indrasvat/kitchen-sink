@@ -228,6 +228,46 @@ func TestCustomMissingPolicyInstallRunsAndVerifies(t *testing.T) {
 	}
 }
 
+func TestCustomMissingPolicyInstallVerifiesUserLocalBinaryFromSparsePath(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/usr/bin:/bin")
+
+	toolPath := filepath.Join(binDir, "sarasa-path-tool")
+	installScript := "printf '#!/bin/sh\\necho v2.0.0\\n' > " + toolPath + " && chmod +x " + toolPath
+
+	cfg := config.DefaultConfig()
+	cfg.Custom.StateDir = filepath.Join(home, ".local", "state", "sarasa", "custom")
+	cfg.Custom.Tools = []config.CustomToolConfig{
+		{
+			Name:    "sarasa-path-tool",
+			Binary:  "sarasa-path-tool",
+			Missing: "install",
+			Latest:  config.CustomLatestConfig{Value: "v2.0.0"},
+			Upgrade: config.CustomActionConfig{Shell: installScript},
+			Verify: config.CustomProbeConfig{
+				Argv:  []string{"sarasa-path-tool", "--version"},
+				Regex: `v?[0-9]+\.[0-9]+\.[0-9]+`,
+			},
+		},
+	}
+
+	result, err := NewCustom(&Options{Config: cfg}).Upgrade(context.Background(), false)
+	if err != nil {
+		t.Fatalf("Upgrade failed: %v", err)
+	}
+	if len(result.Upgraded) != 1 {
+		t.Fatalf("expected 1 upgraded package, got %d failed=%d", len(result.Upgraded), len(result.Failed))
+	}
+	if result.Upgraded[0].Latest != "v2.0.0" {
+		t.Errorf("Latest = %q, want v2.0.0", result.Upgraded[0].Latest)
+	}
+}
+
 func TestCustomMissingPolicyFail(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Custom.Tools = []config.CustomToolConfig{

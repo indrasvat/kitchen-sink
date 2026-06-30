@@ -19,11 +19,12 @@ const (
 
 // Package represents a package that can be upgraded.
 type Package struct {
-	Name    string `json:"name"`
-	Current string `json:"current"`
-	Latest  string `json:"latest"`
-	IsMajor bool   `json:"is_major,omitempty"`
-	Method  string `json:"method,omitempty"`
+	Name       string `json:"name"`
+	Current    string `json:"current"`
+	Latest     string `json:"latest"`
+	IsMajor    bool   `json:"is_major,omitempty"`
+	Method     string `json:"method,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // UpgradeResult holds the results of an upgrade operation.
