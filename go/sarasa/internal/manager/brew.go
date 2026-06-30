@@ -442,17 +442,20 @@ func expandHomePath(path string) string {
 
 func expandBrewTargetPath(path string) (string, bool) {
 	path = expandHomePath(path)
-	replacements := map[string]string{
-		"$HOME":              homeDir(),
-		"${HOME}":            homeDir(),
-		"$APPDIR":            brewAppDir,
-		"${APPDIR}":          brewAppDir,
-		"$HOMEBREW_PREFIX":   homebrewPrefix(),
-		"${HOMEBREW_PREFIX}": homebrewPrefix(),
+	replacements := []struct {
+		token string
+		value string
+	}{
+		{"${HOMEBREW_PREFIX}", homebrewPrefix()},
+		{"$HOMEBREW_PREFIX", homebrewPrefix()},
+		{"${APPDIR}", brewAppDir},
+		{"$APPDIR", brewAppDir},
+		{"${HOME}", homeDir()},
+		{"$HOME", homeDir()},
 	}
-	for token, value := range replacements {
-		if value != "" {
-			path = strings.ReplaceAll(path, token, value)
+	for _, replacement := range replacements {
+		if replacement.value != "" {
+			path = strings.ReplaceAll(path, replacement.token, replacement.value)
 		}
 	}
 	if strings.Contains(path, "$") {

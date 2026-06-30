@@ -104,14 +104,29 @@ JSON
 
 func TestCaskTargetDirExpandsKnownTokens(t *testing.T) {
 	prefix := t.TempDir()
+	home := t.TempDir()
 	t.Setenv("HOMEBREW_PREFIX", prefix)
+	t.Setenv("HOME", home)
 
-	got, ok := caskTargetDir("$HOMEBREW_PREFIX/bin/fig")
-	if !ok {
-		t.Fatal("expected HOMEBREW_PREFIX target to resolve")
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{"homebrew prefix", "$HOMEBREW_PREFIX/bin/fig", filepath.Join(prefix, "bin")},
+		{"braced homebrew prefix", "${HOMEBREW_PREFIX}/bin/fig", filepath.Join(prefix, "bin")},
+		{"home", "$HOME/Applications/Foo.app", filepath.Join(home, "Applications")},
 	}
-	if got != filepath.Join(prefix, "bin") {
-		t.Fatalf("target dir = %q, want %q", got, filepath.Join(prefix, "bin"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := caskTargetDir(tt.target)
+			if !ok {
+				t.Fatal("expected target to resolve")
+			}
+			if got != tt.want {
+				t.Fatalf("target dir = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
