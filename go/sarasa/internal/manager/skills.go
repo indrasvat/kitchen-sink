@@ -3,14 +3,18 @@ package manager
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/indrasvat/sarasa/internal/logger"
+	"github.com/indrasvat/sarasa/internal/process"
 )
 
 func init() {
@@ -22,6 +26,8 @@ type Skills struct {
 	opts *Options
 }
 
+var errSkillsReadOnlyCheckUnsupported = errors.New("skills CLI does not provide a read-only update check; run skills without dry-run to update")
+
 // NewSkills creates a new skills manager.
 func NewSkills(opts *Options) Manager {
 	return &Skills{opts: opts}
@@ -32,7 +38,7 @@ func (s *Skills) Name() string {
 }
 
 func (s *Skills) IsAvailable() bool {
-	if _, err := exec.LookPath("npx"); err != nil {
+	if _, err := process.LookPath("npx"); err != nil {
 		return false
 	}
 	_, err := os.Stat(skillLockFilePath())
@@ -40,89 +46,82 @@ func (s *Skills) IsAvailable() bool {
 }
 
 func (s *Skills) SetSkipList(packages []string) {
+	if s.opts == nil {
+		s.opts = &Options{}
+	}
 	s.opts.SkipList = packages
 }
 
 func (s *Skills) CheckOutdated(ctx context.Context) ([]Package, error) {
-	log := logger.WithManager(s.Name())
-
-	cmd := exec.CommandContext(ctx, "npx", "skills", "check")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Debug("npx skills check returned non-zero",
-			"error", err.Error(),
-			"output", string(output),
-			"action", "check_outdated",
-		)
-		// npx skills check may exit non-zero but still produce useful output
-		if len(output) == 0 {
-			return nil, nil
-		}
-	}
-
-	if len(output) == 0 {
-		return nil, nil
-	}
-
-	packages, unparsed := parseSkillsCheckOutput(string(output))
-	if len(unparsed) > 0 {
-		log.Debug("Unparsed lines from npx skills check",
-			"unparsed_count", len(unparsed),
-		)
-	}
-
-	// Apply skip list filtering
-	var filtered []Package
-	for _, pkg := range packages {
-		if s.opts.ShouldSkip(pkg.Name) {
-			continue
-		}
-		filtered = append(filtered, pkg)
-	}
-
-	return filtered, nil
+	_ = ctx
+	return nil, errSkillsReadOnlyCheckUnsupported
 }
 
 func (s *Skills) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error) {
 	log := logger.WithManager(s.Name())
 	result := &UpgradeResult{}
 
-	// Pre-check outdated skills for reporting (honors skip list).
-	// Note: CheckOutdated may return (nil, nil) on transient failures,
-	// so we don't use this to gate the update — only for result reporting.
-	outdated, _ := s.CheckOutdated(ctx)
-
 	if dryRun {
-		result.Skipped = outdated
-		log.Info("Would run npx skills update", "action", "upgrade", "dry_run", true)
+		log.Info("Skipping skills dry-run because the skills CLI has no read-only check command",
+			"action", "upgrade",
+			"dry_run", true,
+		)
+		return result, errSkillsReadOnlyCheckUnsupported
+	}
+
+	targetSkills, skipped, err := s.updateTargets()
+	if err != nil {
+		return nil, err
+	}
+	result.Skipped = append(result.Skipped, skipped...)
+	if len(targetSkills) == 0 && len(skipped) > 0 {
+		log.Info("All tracked skills are in skip list", "action", "upgrade", "skipped", len(skipped))
 		return result, nil
 	}
 
-	logger.LogStart(s.Name())
-
+	args := skillsUpdateArgs(targetSkills)
+	cmd, commandLabel, err := s.command(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "npx", "skills", "update")
 	output, err := cmd.CombinedOutput()
 	duration := time.Since(start).Milliseconds()
 
+	upgraded, failed, cliSkipped, unparsed := parseSkillsUpdateOutput(string(output))
+	result.Upgraded = append(result.Upgraded, upgraded...)
+	result.Failed = append(result.Failed, failed...)
+	result.Skipped = append(result.Skipped, cliSkipped...)
+	if len(unparsed) > 0 {
+		log.Debug("Unparsed lines from skills update",
+			"unparsed_count", len(unparsed),
+		)
+	}
+
 	if err != nil {
-		log.Error("npx skills update failed",
+		if len(result.Failed) == 0 {
+			result.Failed = append(result.Failed, Package{
+				Name:    "skills",
+				Current: customUnknown,
+				Latest:  "update failed",
+			})
+		}
+		log.Error("skills update failed",
 			"action", "upgrade",
+			"command", commandLabel,
 			"error", err.Error(),
 			"output", string(output),
 			"duration_ms", duration,
 		)
-		result.Failed = outdated
 		return result, err
 	}
 
-	// Populate result with pre-checked outdated packages so the
-	// TUI and plain renderers report what was upgraded.
-	result.Upgraded = outdated
-
-	log.Info("npx skills update completed",
+	log.Info("skills update completed",
 		"action", "complete",
+		"command", commandLabel,
 		"upgraded", len(result.Upgraded),
+		"failed", len(result.Failed),
+		"skipped", len(result.Skipped),
 		"duration_ms", duration,
 	)
 
@@ -131,6 +130,70 @@ func (s *Skills) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, erro
 
 func (s *Skills) Cleanup(_ context.Context) error {
 	return nil
+}
+
+func (s *Skills) command(ctx context.Context, args ...string) (*exec.Cmd, string, error) {
+	npxPath, err := process.LookPath("npx")
+	if err != nil {
+		return nil, "", err
+	}
+	cmdArgs := append([]string{"--yes", "skills"}, args...)
+	cmd := exec.CommandContext(ctx, npxPath, cmdArgs...)
+	process.Configure(cmd, nil)
+	return cmd, strings.Join(append([]string{npxPath}, cmdArgs...), " "), nil
+}
+
+func skillsUpdateArgs(skills []string) []string {
+	args := make([]string, 0, 3+len(skills))
+	args = append(args, "update", "--global", "--yes")
+	args = append(args, skills...)
+	return args
+}
+
+type skillLock struct {
+	Skills map[string]json.RawMessage `json:"skills"`
+}
+
+func readSkillLockNames() ([]string, error) {
+	data, err := os.ReadFile(skillLockFilePath())
+	if err != nil {
+		return nil, err
+	}
+	var lock skillLock
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(lock.Skills))
+	for name := range lock.Skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func (s *Skills) updateTargets() ([]string, []Package, error) {
+	if s.opts == nil || len(s.opts.SkipList) == 0 {
+		return nil, nil, nil
+	}
+	names, err := readSkillLockNames()
+	if err != nil {
+		return nil, nil, err
+	}
+	targets := make([]string, 0, len(names))
+	skipped := make([]Package, 0, len(s.opts.SkipList))
+	for _, name := range names {
+		if s.opts.ShouldSkip(name) {
+			skipped = append(skipped, Package{
+				Name:       name,
+				Current:    customUnknown,
+				Latest:     customUnknown,
+				SkipReason: "in skip list",
+			})
+			continue
+		}
+		targets = append(targets, name)
+	}
+	return targets, skipped, nil
 }
 
 // skillLockFilePath returns the path to the global skills lock file.
@@ -150,99 +213,126 @@ func stripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
 }
 
-// parseSkillsCheckOutput parses the output of `npx skills check`.
-//
-// Expected format:
-//
-//	Checking for skill updates...
-//	Checking N skill(s) for updates...
-//
-//	M update(s) available:
-//
-//	  ↑ skill-name
-//	    source: owner/repo
-//
-//	Run npx skills update to update all skills
-//
-//	Could not check N skill(s) (may need reinstall)
-//
-//	  ✗ skill-name
-//	    source: owner/repo
-func parseSkillsCheckOutput(output string) (packages []Package, unparsed []string) {
+func parseSkillsUpdateOutput(output string) (upgraded, failed, skipped []Package, unparsed []string) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
-
-	// Track whether we're in the "updates available" section vs the "could not check" section
-	inUpdates := false
-	inErrors := false
-	var pendingName string
+	inSkipped := false
 
 	for scanner.Scan() {
 		line := stripANSI(scanner.Text())
 		trimmed := strings.TrimSpace(line)
-
-		// Skip empty lines
 		if trimmed == "" {
 			continue
 		}
 
-		// Detect section boundaries
-		if strings.Contains(trimmed, "update(s) available") {
-			inUpdates = true
-			inErrors = false
+		if strings.Contains(trimmed, "skill(s) cannot be checked automatically") {
+			inSkipped = true
 			continue
 		}
-		if strings.Contains(trimmed, "Could not check") {
-			inUpdates = false
-			inErrors = true
+		if strings.HasPrefix(trimmed, "To update:") {
 			continue
 		}
 
-		// Skip informational lines
-		if strings.HasPrefix(trimmed, "Checking") ||
-			strings.HasPrefix(trimmed, "Run npx skills") ||
-			strings.HasPrefix(trimmed, "All skills are up to date") {
-			continue
-		}
-
-		// Parse update entries: "↑ skill-name"
-		if inUpdates && strings.HasPrefix(trimmed, "↑") {
-			pendingName = strings.TrimSpace(strings.TrimPrefix(trimmed, "↑"))
-			continue
-		}
-
-		// Parse source line after an update entry
-		if inUpdates && pendingName != "" && strings.HasPrefix(trimmed, "source:") {
-			source := strings.TrimSpace(strings.TrimPrefix(trimmed, "source:"))
-			packages = append(packages, Package{
-				Name:    pendingName,
-				Current: source,
-				Latest:  "update available",
-				IsMajor: false,
+		if name, ok := parseUpdatedSkillLine(trimmed); ok {
+			upgraded = append(upgraded, Package{
+				Name:    name,
+				Current: customUnknown,
+				Latest:  "latest",
 			})
-			pendingName = ""
+			inSkipped = false
 			continue
 		}
-
-		// Skip error section entries (✗ lines and their sources)
-		if inErrors && (strings.HasPrefix(trimmed, "✗") || strings.HasPrefix(trimmed, "source:")) {
+		if name, ok := parseFailedSkillLine(trimmed); ok {
+			failed = append(failed, Package{
+				Name:    name,
+				Current: customUnknown,
+				Latest:  "update failed",
+			})
+			inSkipped = false
 			continue
 		}
-
-		// Track unparsed lines (excluding the ones we intentionally skip)
-		if inUpdates || inErrors {
-			unparsed = append(unparsed, trimmed)
+		if inSkipped {
+			parsed := parseSkippedSkillLine(trimmed)
+			if len(parsed) > 0 {
+				skipped = append(skipped, parsed...)
+				continue
+			}
 		}
+
+		if isSkillsUpdateInfoLine(trimmed) {
+			continue
+		}
+		unparsed = append(unparsed, trimmed)
 	}
 
-	// Handle case where an update entry had no source line
-	if pendingName != "" {
+	return upgraded, failed, skipped, unparsed
+}
+
+func parseUpdatedSkillLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, "✓") {
+		return "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "✓"))
+	if !strings.HasPrefix(line, "Updated") {
+		return "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "Updated"))
+	if line == "" || strings.Contains(line, "skill(s)") {
+		return "", false
+	}
+	return strings.TrimSpace(line), true
+}
+
+func parseFailedSkillLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, "✗") {
+		return "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "✗"))
+	if !strings.HasPrefix(line, "Failed to update") {
+		return "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "Failed to update"))
+	if line == "" || strings.Contains(line, "skill(s)") {
+		return "", false
+	}
+	return strings.TrimSpace(line), true
+}
+
+var skippedSkillPattern = regexp.MustCompile(`^•\s+(.+)\s+\(([^)]+)\)$`)
+
+func parseSkippedSkillLine(line string) []Package {
+	matches := skippedSkillPattern.FindStringSubmatch(line)
+	if len(matches) != 3 {
+		return nil
+	}
+	names := strings.Split(matches[1], ",")
+	packages := make([]Package, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
 		packages = append(packages, Package{
-			Name:    pendingName,
-			Current: customUnknown,
-			Latest:  "update available",
-			IsMajor: false,
+			Name:       name,
+			Current:    customUnknown,
+			Latest:     customUnknown,
+			SkipReason: matches[2],
 		})
 	}
+	return packages
+}
 
-	return packages, unparsed
+func isSkillsUpdateInfoLine(line string) bool {
+	return strings.HasPrefix(line, "Checking for skill updates") ||
+		strings.HasPrefix(line, "Checking skills from source:") ||
+		strings.HasPrefix(line, "Warning:") ||
+		strings.HasPrefix(line, "Skipping deletion in non-interactive mode") ||
+		strings.Contains(line, "GitHub rate limit reached") ||
+		strings.Contains(line, "set GITHUB_TOKEN") ||
+		strings.HasPrefix(line, "Found ") ||
+		strings.HasPrefix(line, "Updating ") ||
+		strings.HasPrefix(line, "•") ||
+		strings.HasPrefix(line, "✓ Updated ") ||
+		strings.HasPrefix(line, "Failed to update ") ||
+		strings.HasPrefix(line, "All global skills are up to date") ||
+		strings.HasPrefix(line, "✓ All global skills are up to date")
 }
