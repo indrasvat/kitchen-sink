@@ -82,7 +82,15 @@ times = ["08:00", "14:00", "22:00"]
 
 Scheduled launchd runs use an explicit PATH that includes the directory
 containing the Sarasa binary, `~/.local/bin`, `~/bin`, `~/go/bin`, the current
-PATH at schedule install time, and the standard macOS system paths.
+PATH at schedule install time, and the standard macOS system paths. Sarasa also
+normalizes PATH for each child process, so custom tools installed into
+user-local directories continue to verify correctly even if an older launchd
+plist is still loaded.
+
+Homebrew cask upgrades that need access to app locations such as
+`/Applications`, sudo credentials, manual Caskroom cleanup, or explicit tap
+trust are deferred as skipped packages instead of being retried as noisy
+scheduled-run failures. Formula upgrades continue to run normally.
 
 ## Custom Tools
 
@@ -157,7 +165,7 @@ binary = "shux"
 missing = "install"
 current = { argv = ["shux", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 latest = { github_release = "indrasvat/shux" }
-upgrade = { shell = "curl -sSfL https://raw.githubusercontent.com/indrasvat/shux/main/install.sh | sh -s -- --version ${latest} --dir ~/.local/bin", timeout = "15m" }
+upgrade = { shell = "curl -sSfL https://shux.pages.dev/install.sh | sh -s -- --version ${latest} --dir ~/.local/bin --no-skill", timeout = "15m" }
 verify = { argv = ["shux", "--version"], regex = "v?[0-9]+\\.[0-9]+\\.[0-9]+" }
 ```
 

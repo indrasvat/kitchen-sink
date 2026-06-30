@@ -402,7 +402,7 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 			}
 		}
 
-		if len(result.Skipped) > 0 && runDryRun {
+		if len(result.Skipped) > 0 {
 			hasOutput = true
 			for _, pkg := range result.Skipped {
 				majorTag := ""
@@ -413,14 +413,23 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 				if pkg.Method != "" {
 					methodTag = " " + c(dim, "· "+pkg.Method)
 				}
-				fmt.Printf("    %s %s  %s %s %s%s%s\n",
+				reasonTag := ""
+				if pkg.SkipReason != "" {
+					reasonTag = " " + c(dim, "· "+pkg.SkipReason)
+				}
+				label := pkg.Latest
+				if !runDryRun {
+					label = "skipped"
+				}
+				fmt.Printf("    %s %s  %s %s %s%s%s%s\n",
 					c(brightMagenta, ui.IconTriangle),
 					c(bold+white, pkg.Name),
 					c(dim, pkg.Current),
 					c(dim, ui.IconArrow),
-					c(brightMagenta, pkg.Latest),
+					c(brightMagenta, label),
 					majorTag,
 					methodTag,
+					reasonTag,
 				)
 			}
 		}
@@ -472,7 +481,10 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 		if totalFailed > 0 {
 			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", totalFailed)))
 		}
-		if totalUpgraded == 0 && totalFailed == 0 {
+		if totalSkipped > 0 {
+			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d skipped", totalSkipped)))
+		}
+		if totalUpgraded == 0 && totalFailed == 0 && totalSkipped == 0 {
 			summaryParts = append(summaryParts, c(green, "All up to date"))
 		}
 	}

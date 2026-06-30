@@ -549,8 +549,12 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 				if pkg.Package.Method != "" {
 					methodTag = " " + ui.StyleMethodTag.Render("· "+pkg.Package.Method)
 				}
+				reasonTag := ""
+				if pkg.Package.SkipReason != "" {
+					reasonTag = " " + ui.StyleMethodTag.Render("· "+pkg.Package.SkipReason)
+				}
 
-				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag))
+				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag, reasonTag))
 				if i < len(result.Packages)-1 {
 					content.WriteString("\n")
 				}
@@ -607,7 +611,10 @@ func (m Model) renderUpgradeSummary() string {
 	if m.totalFailed > 0 {
 		parts = append(parts, ui.StyleError.Render(fmt.Sprintf("%d failed", m.totalFailed)))
 	}
-	if m.totalUpgraded == 0 && m.totalFailed == 0 {
+	if m.totalSkipped > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#8B008B", Dark: "#DA70D6"}).Render(fmt.Sprintf("%d skipped", m.totalSkipped)))
+	}
+	if m.totalUpgraded == 0 && m.totalFailed == 0 && m.totalSkipped == 0 {
 		parts = append(parts, ui.StyleSuccess.Render("All up to date"))
 	}
 

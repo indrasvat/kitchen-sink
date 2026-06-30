@@ -17,6 +17,7 @@ import (
 
 	"github.com/indrasvat/sarasa/internal/config"
 	"github.com/indrasvat/sarasa/internal/logger"
+	"github.com/indrasvat/sarasa/internal/process"
 )
 
 func init() {
@@ -286,7 +287,7 @@ func customToolAvailable(tool config.CustomToolConfig) bool {
 	if tool.Binary == "" {
 		return true
 	}
-	_, err := osexec.LookPath(tool.Binary)
+	_, err := process.LookPath(tool.Binary)
 	return err == nil
 }
 
@@ -415,10 +416,12 @@ func githubToken() string {
 }
 
 func latestGitHubReleaseWithGH(ctx context.Context, repo string) (string, error) {
-	if _, err := osexec.LookPath("gh"); err != nil {
+	ghPath, err := process.LookPath("gh")
+	if err != nil {
 		return "", err
 	}
-	cmd := osexec.CommandContext(ctx, "gh", "api", "repos/"+repo+"/releases/latest", "--jq", ".tag_name")
+	cmd := osexec.CommandContext(ctx, ghPath, "api", "repos/"+repo+"/releases/latest", "--jq", ".tag_name")
+	process.Configure(cmd, nil)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -479,15 +482,20 @@ func runCustomAction(ctx context.Context, defaultTimeout, toolTimeout string, ac
 		if len(argv) == 0 {
 			return "", errors.New("empty argv action")
 		}
-		cmd = osexec.CommandContext(cmdCtx, argv[0], argv[1:]...)
+		command := argv[0]
+		if path, err := process.LookPath(command); err == nil {
+			command = path
+		}
+		cmd = osexec.CommandContext(cmdCtx, command, argv[1:]...)
 	}
 	if action.Cwd != "" {
 		cmd.Dir = action.Cwd
 	}
-	cmd.Env = os.Environ()
+	extraEnv := make(map[string]string, len(action.Env))
 	for key, value := range action.Env {
-		cmd.Env = append(cmd.Env, key+"="+substitute(value, vars))
+		extraEnv[key] = substitute(value, vars)
 	}
+	process.Configure(cmd, extraEnv)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
