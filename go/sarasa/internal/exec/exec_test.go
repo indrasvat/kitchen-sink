@@ -14,7 +14,7 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	marker := filepath.Join(dir, "child-finished")
 	script := filepath.Join(dir, "spawn-child.sh")
 	if err := os.WriteFile(script, []byte(`#!/bin/sh
-(sleep 2; touch "$1") &
+(sleep 10; touch "$1") &
 wait
 `), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)

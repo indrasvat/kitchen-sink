@@ -213,6 +213,14 @@ func TestBrewDeferredReasonDoesNotHideFormulaFailures(t *testing.T) {
 	}
 }
 
+func TestBrewUpgradeFailureTextIncludesTimeoutError(t *testing.T) {
+	text := brewUpgradeFailureText(nil, fmt.Errorf("command timed out after 30m0s: signal: killed"))
+	got := brewDeferredReason(Package{Method: brewMethodCask}, text)
+	if got != "requires manual cask upgrade after command timeout" {
+		t.Fatalf("brewDeferredReason() = %q, want timeout deferral", got)
+	}
+}
+
 func TestBrewUpgradeDefersCaskUpgradeFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	appDir := filepath.Join(tmpDir, "Applications")

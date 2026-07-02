@@ -200,11 +200,12 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
-			if reason := brewDeferredReason(pkg, string(output)); reason != "" {
+			failureText := brewUpgradeFailureText(output, err)
+			if reason := brewDeferredReason(pkg, failureText); reason != "" {
 				log.Warn("brew upgrade deferred",
 					"package", pkg.Name,
 					"reason", reason,
-					"output", string(output),
+					"output", failureText,
 				)
 				pkg.SkipReason = reason
 				logger.LogSkipped(b.Name(), pkg.Name, reason)
@@ -435,6 +436,16 @@ func brewDeferredReason(pkg Package, output string) string {
 	default:
 		return ""
 	}
+}
+
+func brewUpgradeFailureText(output []byte, err error) string {
+	if err == nil {
+		return string(output)
+	}
+	if len(output) == 0 {
+		return err.Error()
+	}
+	return string(output) + "\n" + err.Error()
 }
 
 func dirWritable(path string) bool {
