@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	sarasaexec "github.com/indrasvat/sarasa/internal/exec"
 	"github.com/indrasvat/sarasa/internal/jsonutil"
 	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/process"
@@ -28,6 +28,11 @@ type Brew struct {
 const (
 	brewMethodFormula = "formula"
 	brewMethodCask    = "cask"
+
+	brewMetadataTimeout = 2 * time.Minute
+	brewUpdateTimeout   = 10 * time.Minute
+	brewUpgradeTimeout  = 30 * time.Minute
+	brewCleanupTimeout  = 10 * time.Minute
 )
 
 var brewAppDir = "/Applications"
@@ -77,10 +82,10 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		return nil, err
 	}
 
-	// First run brew update
-	updateCmd := exec.CommandContext(ctx, brewPath, "update")
-	process.Configure(updateCmd, brewEnv())
-	if err := updateCmd.Run(); err != nil {
+	if _, err := sarasaexec.CombinedOutput(ctx, sarasaexec.Options{
+		Timeout: brewUpdateTimeout,
+		Env:     brewEnv(),
+	}, brewPath, "update"); err != nil {
 		return nil, fmt.Errorf("brew update failed: %w", err)
 	}
 
@@ -90,9 +95,10 @@ func (b *Brew) CheckOutdated(ctx context.Context) ([]Package, error) {
 		args = append(args, "--greedy")
 	}
 
-	cmd := exec.CommandContext(ctx, brewPath, args...)
-	process.Configure(cmd, brewEnv())
-	output, err := cmd.Output()
+	output, err := sarasaexec.Output(ctx, sarasaexec.Options{
+		Timeout: brewMetadataTimeout,
+		Env:     brewEnv(),
+	}, brewPath, args...)
 	if err != nil {
 		// brew outdated returns exit code 0 even with outdated packages
 		if len(output) == 0 {
@@ -187,17 +193,19 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 		start := time.Now()
 		args := append([]string{"upgrade"}, brewKindArg(pkg)...)
 		args = append(args, pkg.Name)
-		cmd := exec.CommandContext(ctx, brewPath, args...)
-		process.Configure(cmd, brewEnv())
-		output, err := cmd.CombinedOutput()
+		output, err := sarasaexec.CombinedOutput(ctx, sarasaexec.Options{
+			Timeout: brewUpgradeTimeout,
+			Env:     brewEnv(),
+		}, brewPath, args...)
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
-			if reason := brewDeferredReason(pkg, string(output)); reason != "" {
+			failureText := brewUpgradeFailureText(output, err)
+			if reason := brewDeferredReason(pkg, failureText); reason != "" {
 				log.Warn("brew upgrade deferred",
 					"package", pkg.Name,
 					"reason", reason,
-					"output", string(output),
+					"output", failureText,
 				)
 				pkg.SkipReason = reason
 				logger.LogSkipped(b.Name(), pkg.Name, reason)
@@ -247,9 +255,10 @@ func (b *Brew) Upgrade(ctx context.Context, dryRun bool) (*UpgradeResult, error)
 func (b *Brew) getInstalledVersion(ctx context.Context, brewPath string, pkg Package) (string, error) {
 	args := append([]string{"info", "--json=v2"}, brewKindArg(pkg)...)
 	args = append(args, pkg.Name)
-	cmd := exec.CommandContext(ctx, brewPath, args...)
-	process.Configure(cmd, brewEnv())
-	output, err := cmd.Output()
+	output, err := sarasaexec.Output(ctx, sarasaexec.Options{
+		Timeout: brewMetadataTimeout,
+		Env:     brewEnv(),
+	}, brewPath, args...)
 	if err != nil {
 		return "", err
 	}
@@ -290,24 +299,27 @@ func (b *Brew) Cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	duCmd := exec.CommandContext(ctx, brewPath, "--cache")
-	process.Configure(duCmd, brewEnv())
-	cacheDir, err := duCmd.Output()
+	cacheDir, err := sarasaexec.Output(ctx, sarasaexec.Options{
+		Timeout: brewMetadataTimeout,
+		Env:     brewEnv(),
+	}, brewPath, "--cache")
 	if err != nil {
 		return fmt.Errorf("failed to get cache dir: %w", err)
 	}
 
 	// Run cleanup
-	cleanupCmd := exec.CommandContext(ctx, brewPath, "cleanup")
-	process.Configure(cleanupCmd, brewEnv())
-	if err := cleanupCmd.Run(); err != nil {
+	if _, err := sarasaexec.CombinedOutput(ctx, sarasaexec.Options{
+		Timeout: brewCleanupTimeout,
+		Env:     brewEnv(),
+	}, brewPath, "cleanup"); err != nil {
 		return fmt.Errorf("brew cleanup failed: %w", err)
 	}
 
 	// Run autoremove
-	autoremoveCmd := exec.CommandContext(ctx, brewPath, "autoremove")
-	process.Configure(autoremoveCmd, brewEnv())
-	if err := autoremoveCmd.Run(); err != nil {
+	if _, err := sarasaexec.CombinedOutput(ctx, sarasaexec.Options{
+		Timeout: brewCleanupTimeout,
+		Env:     brewEnv(),
+	}, brewPath, "autoremove"); err != nil {
 		log.Warn("brew autoremove failed", "error", err.Error())
 	}
 
@@ -345,9 +357,10 @@ func (b *Brew) deferReason(ctx context.Context, brewPath string, pkg Package) st
 }
 
 func (b *Brew) caskAppTargetDirs(ctx context.Context, brewPath, name string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, brewPath, "info", "--json=v2", "--cask", name)
-	process.Configure(cmd, brewEnv())
-	output, err := cmd.Output()
+	output, err := sarasaexec.Output(ctx, sarasaexec.Options{
+		Timeout: brewMetadataTimeout,
+		Env:     brewEnv(),
+	}, brewPath, "info", "--json=v2", "--cask", name)
 	if err != nil {
 		return nil, err
 	}
@@ -414,6 +427,8 @@ func brewDeferredReason(pkg Package, output string) string {
 		strings.Contains(text, "sudo: a password is required") ||
 		strings.Contains(text, "which may request your password"):
 		return "requires sudo/admin credentials"
+	case strings.Contains(text, "command timed out after"):
+		return "requires manual cask upgrade after command timeout"
 	case strings.Contains(text, "there is already an app at"):
 		return "requires manual cask app cleanup or admin lease"
 	case strings.Contains(text, "refusing to load formula") && strings.Contains(text, "untrusted tap"):
@@ -421,6 +436,16 @@ func brewDeferredReason(pkg Package, output string) string {
 	default:
 		return ""
 	}
+}
+
+func brewUpgradeFailureText(output []byte, err error) string {
+	if err == nil {
+		return string(output)
+	}
+	if len(output) == 0 {
+		return err.Error()
+	}
+	return string(output) + "\n" + err.Error()
 }
 
 func dirWritable(path string) bool {

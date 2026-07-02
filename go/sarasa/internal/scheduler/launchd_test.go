@@ -53,6 +53,8 @@ func TestGeneratePlistRendersConfiguredEnvironmentPath(t *testing.T) {
 		"<integer>9</integer>",
 		"<integer>30</integer>",
 		"<string>/tmp/bin:/usr/bin:/bin</string>",
+		"<key>LowPriorityIO</key>",
+		"<true/>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("plist missing %q:\n%s", want, text)

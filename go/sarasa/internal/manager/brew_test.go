@@ -180,6 +180,11 @@ func TestBrewDeferredReason(t *testing.T) {
 			want:   "requires manual cask app cleanup or admin lease",
 		},
 		{
+			name:   "timeout",
+			output: "command timed out after 30m0s: signal: killed",
+			want:   "requires manual cask upgrade after command timeout",
+		},
+		{
 			name:   "untrusted tap",
 			output: "Error: Refusing to load formula cloudflare/cloudflare/warp from untrusted tap cloudflare/cloudflare.",
 			want:   "requires explicit brew tap trust",
@@ -205,6 +210,14 @@ func TestBrewDeferredReasonDoesNotHideFormulaFailures(t *testing.T) {
 	output := "Error: Refusing to load formula cloudflare/cloudflare/warp from untrusted tap cloudflare/cloudflare."
 	if got := brewDeferredReason(Package{Method: brewMethodFormula}, output); got != "" {
 		t.Fatalf("formula failure deferred as %q", got)
+	}
+}
+
+func TestBrewUpgradeFailureTextIncludesTimeoutError(t *testing.T) {
+	text := brewUpgradeFailureText(nil, fmt.Errorf("command timed out after 30m0s: signal: killed"))
+	got := brewDeferredReason(Package{Method: brewMethodCask}, text)
+	if got != "requires manual cask upgrade after command timeout" {
+		t.Fatalf("brewDeferredReason() = %q, want timeout deferral", got)
 	}
 }
 

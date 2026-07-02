@@ -66,6 +66,29 @@ type Options struct {
 	Config      *config.Config
 }
 
+// Clone returns an independent copy of Options for one manager instance.
+func (o *Options) Clone() *Options {
+	if o == nil {
+		return &Options{}
+	}
+	clone := *o
+	if o.SkipList != nil {
+		clone.SkipList = append([]string(nil), o.SkipList...)
+	}
+	return &clone
+}
+
+// CloneWithSkipList returns an independent copy with a manager-specific skip list.
+func (o *Options) CloneWithSkipList(packages []string) *Options {
+	clone := o.Clone()
+	if packages != nil {
+		clone.SkipList = append([]string(nil), packages...)
+	} else {
+		clone.SkipList = nil
+	}
+	return clone
+}
+
 // ShouldSkip checks if a package should be skipped.
 func (o *Options) ShouldSkip(pkg string) bool {
 	for _, s := range o.SkipList {

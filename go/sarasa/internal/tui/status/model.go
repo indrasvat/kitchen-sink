@@ -35,16 +35,18 @@ const (
 	stateLoading upgradeState = iota
 	stateViewing
 	stateUpgrading
+	stateCleaningUp
 	stateUpgraded
 )
 
 type upgradeResult struct {
-	Name     string
-	Packages []*packageResult
-	Status   string // "pending", "upgrading", "done", "error"
-	Error    error
-	Duration time.Duration
-	Start    time.Time
+	Name         string
+	Packages     []*packageResult
+	Status       string // "pending", "upgrading", "done", "error"
+	Error        error
+	CleanupError error
+	Duration     time.Duration
+	Start        time.Time
 }
 
 type packageResult struct {
@@ -82,6 +84,10 @@ type upgradeManagerDoneMsg struct {
 	result   *manager.UpgradeResult
 	duration time.Duration
 	err      error
+}
+
+type cleanupDoneMsg struct {
+	errors map[string]error
 }
 
 // New creates a new status TUI model.
@@ -182,15 +188,6 @@ func (m Model) runManagerUpgrade(name string) tea.Cmd {
 		result, err := mgr.Upgrade(ctx, false)
 		duration := time.Since(start)
 
-		if err == nil {
-			if cleanupErr := mgr.Cleanup(ctx); cleanupErr != nil {
-				logger.WithManager(name).Warn("Cleanup failed",
-					"error", cleanupErr.Error(),
-					"action", "cleanup",
-				)
-			}
-		}
-
 		return upgradeManagerDoneMsg{
 			name:     name,
 			result:   result,
@@ -200,7 +197,40 @@ func (m Model) runManagerUpgrade(name string) tea.Cmd {
 	}
 }
 
-// Update handles messages.
+func (m Model) cleanupUpgradedManagers() tea.Cmd {
+	opts := m.opts
+	cfgProvider := m.cfg
+	names := append([]string(nil), m.upgradeOrder...)
+
+	return func() tea.Msg {
+		ctx := context.Background()
+		cleanupErrors := make(map[string]error)
+		for _, name := range names {
+			result := m.upgradeResults[name]
+			if result == nil || result.Status == "error" {
+				continue
+			}
+			mgr, err := manager.Get(name, opts)
+			if err != nil {
+				cleanupErrors[name] = err
+				continue
+			}
+			if cfgProvider != nil {
+				mgr.SetSkipList(cfgProvider.GetSkipList(name))
+			}
+			if err := mgr.Cleanup(ctx); err != nil {
+				logger.WithManager(name).Warn("Cleanup failed",
+					"error", err.Error(),
+					"action", "cleanup",
+				)
+				cleanupErrors[name] = err
+			}
+		}
+		return cleanupDoneMsg{errors: cleanupErrors}
+	}
+}
+
+//nolint:gocyclo // Bubble Tea state-machine update path; splitting would obscure message flow.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -293,6 +323,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			r.Status = "error"
 			r.Error = msg.err
 		} else {
+			if msg.result == nil {
+				msg.result = &manager.UpgradeResult{}
+			}
 			r.Status = "done"
 			for _, pkg := range msg.result.Upgraded {
 				r.Packages = append(r.Packages, &packageResult{
@@ -330,19 +363,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		logger.LogComplete(msg.name, upgraded, failed, msg.duration.Milliseconds())
 
 		if m.activeCount == 0 {
-			m.state = stateUpgraded
-			totalDuration := time.Since(m.startTime)
-			logger.Get().Info("Status upgrade completed",
-				"total_upgraded", m.totalUpgraded,
-				"total_failed", m.totalFailed,
-				"duration_ms", totalDuration.Milliseconds(),
-			)
+			if m.opts != nil && !m.opts.DryRun && !m.opts.SkipCleanup {
+				m.state = stateCleaningUp
+				return m, tea.Batch(m.spinner.Tick, m.cleanupUpgradedManagers())
+			}
+			m.finishUpgrade()
 		}
 
+		return m, nil
+
+	case cleanupDoneMsg:
+		for name, err := range msg.errors {
+			if result := m.upgradeResults[name]; result != nil {
+				result.CleanupError = err
+			}
+			m.totalFailed++
+		}
+		m.finishUpgrade()
 		return m, nil
 	}
 
 	return m, nil
+}
+
+func (m *Model) finishUpgrade() {
+	m.state = stateUpgraded
+	totalDuration := time.Since(m.startTime)
+	logger.Get().Info("Status upgrade completed",
+		"total_upgraded", m.totalUpgraded,
+		"total_failed", m.totalFailed,
+		"duration_ms", totalDuration.Milliseconds(),
+	)
 }
 
 // View renders the UI.
@@ -355,11 +406,13 @@ func (m Model) View() string {
 	headerText := ui.StyleHeader.Render("SARASA STATUS")
 	switch m.state {
 	case stateLoading:
-		b.WriteString(fmt.Sprintf("  %s %s %s\n", headerIcon, headerText, m.spinner.View()))
+		fmt.Fprintf(&b, "  %s %s %s\n", headerIcon, headerText, m.spinner.View())
 	case stateUpgrading:
-		b.WriteString(fmt.Sprintf("  %s %s  %s Upgrading...\n", headerIcon, headerText, m.spinner.View()))
+		fmt.Fprintf(&b, "  %s %s  %s Upgrading...\n", headerIcon, headerText, m.spinner.View())
+	case stateCleaningUp:
+		fmt.Fprintf(&b, "  %s %s  %s Cleaning up...\n", headerIcon, headerText, m.spinner.View())
 	case stateViewing, stateUpgraded:
-		b.WriteString(fmt.Sprintf("  %s %s\n", headerIcon, headerText))
+		fmt.Fprintf(&b, "  %s %s\n", headerIcon, headerText)
 	}
 	b.WriteString("\n")
 
@@ -381,7 +434,7 @@ func (m Model) View() string {
 		status := m.statuses[name]
 
 		// If upgrading/upgraded and this manager has an upgrade result, show upgrade panel
-		if (m.state == stateUpgrading || m.state == stateUpgraded) && m.upgradeResults != nil {
+		if (m.state == stateUpgrading || m.state == stateCleaningUp || m.state == stateUpgraded) && m.upgradeResults != nil {
 			if ur, ok := m.upgradeResults[name]; ok {
 				b.WriteString(m.renderUpgradePanel(name, ur, panelWidth))
 				// Don't count stats for upgrade panels
@@ -412,7 +465,7 @@ func (m Model) View() string {
 		b.WriteString(m.renderSummary(totalOutdated, totalUpToDate, totalUnavailable, totalErrors))
 	case stateUpgraded:
 		b.WriteString(m.renderUpgradeSummary())
-	case stateLoading, stateUpgrading:
+	case stateLoading, stateUpgrading, stateCleaningUp:
 		// No summary while loading or upgrading
 	}
 
@@ -428,6 +481,8 @@ func (m Model) View() string {
 			b.WriteString(helpStyle.Render("  r refresh  ·  q quit"))
 		}
 	case stateUpgrading:
+		b.WriteString(helpStyle.Render("  q quit"))
+	case stateCleaningUp:
 		b.WriteString(helpStyle.Render("  q quit"))
 	case stateUpgraded:
 		b.WriteString(helpStyle.Render("  r refresh  ·  q quit"))
@@ -451,7 +506,7 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 
 	switch {
 	case status.Loading:
-		content.WriteString(fmt.Sprintf("%s Loading...", m.spinner.View()))
+		fmt.Fprintf(&content, "%s Loading...", m.spinner.View())
 	case !status.Available:
 		content.WriteString(ui.StyleMuted.Render(ui.IconCross + " Not installed"))
 	case status.Error != nil:
@@ -460,7 +515,7 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 		content.WriteString(ui.StyleSuccess.Render(ui.IconCheck + " All up to date"))
 	default:
 		outdatedCount := ui.StyleWarning.Render(fmt.Sprintf("%d outdated", len(status.Outdated)))
-		content.WriteString(fmt.Sprintf("%s\n", outdatedCount))
+		fmt.Fprintf(&content, "%s\n", outdatedCount)
 
 		// Package list
 		for i, pkg := range status.Outdated {
@@ -480,7 +535,7 @@ func (m Model) renderManagerPanel(name string, status *ManagerStatus, width int)
 
 			mgrColor := ui.ManagerColor(name)
 			triangle := lipgloss.NewStyle().Foreground(mgrColor).Render(ui.IconTriangle)
-			content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s", triangle, pkgName, current, arrow, latest, majorTag, methodTag))
+			fmt.Fprintf(&content, "  %s %s  %s %s %s%s%s", triangle, pkgName, current, arrow, latest, majorTag, methodTag)
 			if i < len(status.Outdated)-1 {
 				content.WriteString("\n")
 			}
@@ -509,7 +564,7 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 		content.WriteString(ui.StyleMuted.Render("waiting..."))
 	case "upgrading":
 		elapsed := time.Since(result.Start)
-		content.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), ui.StyleDuration.Render(formatDuration(elapsed))))
+		fmt.Fprintf(&content, "%s %s", m.spinner.View(), ui.StyleDuration.Render(formatDuration(elapsed)))
 	case "error":
 		content.WriteString(ui.StyleError.Render(ui.IconCross + " " + result.Error.Error()))
 	case "done":
@@ -517,7 +572,7 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 			content.WriteString(ui.StyleSuccess.Render(ui.IconCheck + " Already up to date"))
 		} else {
 			durationStr := ui.StyleDuration.Render(fmt.Sprintf("(%s)", formatDuration(result.Duration)))
-			content.WriteString(fmt.Sprintf("%s\n", durationStr))
+			fmt.Fprintf(&content, "%s\n", durationStr)
 
 			for i, pkg := range result.Packages {
 				var statusIcon string
@@ -554,12 +609,18 @@ func (m Model) renderUpgradePanel(name string, result *upgradeResult, width int)
 					reasonTag = " " + ui.StyleMethodTag.Render("· "+pkg.Package.SkipReason)
 				}
 
-				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag, reasonTag))
+				fmt.Fprintf(&content, "  %s %s  %s %s %s%s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag, reasonTag)
 				if i < len(result.Packages)-1 {
 					content.WriteString("\n")
 				}
 			}
 		}
+	}
+	if result.CleanupError != nil {
+		if content.Len() > 0 {
+			content.WriteString("\n")
+		}
+		content.WriteString(ui.StyleWarning.Render(ui.IconWarning + " cleanup failed: " + result.CleanupError.Error()))
 	}
 
 	panelStyle := ui.GetManagerPanelStyle(name).Width(width).MarginLeft(2)
@@ -587,12 +648,12 @@ func (m Model) renderSummary(outdated, upToDate, unavailable, errors int) string
 	if len(parts) > 0 {
 		separator := ui.StyleMuted.Render(" · ")
 		summaryLine := strings.Join(parts, separator)
-		b.WriteString(fmt.Sprintf("  %s  %s\n", ui.StyleSummaryIcon.Render(ui.IconSparkle), summaryLine))
+		fmt.Fprintf(&b, "  %s  %s\n", ui.StyleSummaryIcon.Render(ui.IconSparkle), summaryLine)
 	}
 
 	if outdated > 0 {
 		keyStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary)
-		b.WriteString(fmt.Sprintf("     Press %s to upgrade\n", keyStyle.Render("u")))
+		fmt.Fprintf(&b, "     Press %s to upgrade\n", keyStyle.Render("u"))
 	}
 
 	b.WriteString("\n")
@@ -627,7 +688,7 @@ func (m Model) renderUpgradeSummary() string {
 
 	separator := ui.StyleMuted.Render(" · ")
 	summaryLine := strings.Join(parts, separator)
-	b.WriteString(fmt.Sprintf("\n  %s  %s\n", summaryIcon, summaryLine))
+	fmt.Fprintf(&b, "\n  %s  %s\n", summaryIcon, summaryLine)
 	b.WriteString("\n")
 	return b.String()
 }

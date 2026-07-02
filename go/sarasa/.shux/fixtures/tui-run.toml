@@ -1,0 +1,23 @@
+managers = ["brew", "volta", "pipx"]
+
+[skip]
+brew = ["skip-me"]
+volta = []
+pipx = []
+bun = []
+skills = []
+custom = []
+
+[logging]
+dir = ".shux/out/run-tui/logs"
+retention_days = 1
+level = "debug"
+
+[brew]
+greedy = false
+
+[npm]
+skip_major = false
+
+[volta]
+skip_major = false

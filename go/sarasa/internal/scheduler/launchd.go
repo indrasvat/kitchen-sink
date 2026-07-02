@@ -34,6 +34,12 @@ const (
         <string>run</string>
     </array>
 
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+
     <key>StartCalendarInterval</key>
     <array>
 {{- range .Times}}

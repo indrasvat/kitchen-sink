@@ -118,7 +118,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 	// Header with icon
 	b.WriteString("\n")
 	if useColor {
-		b.WriteString(fmt.Sprintf("  %s %s\n", ui.IconDiamond, headerStyle.Render("SARASA")))
+		fmt.Fprintf(&b, "  %s %s\n", ui.IconDiamond, headerStyle.Render("SARASA"))
 	} else {
 		b.WriteString("  SARASA\n")
 	}
@@ -146,7 +146,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 		b.WriteString("  ")
 		for i, m := range managers {
 			style := lipgloss.NewStyle().Foreground(m.color)
-			b.WriteString(fmt.Sprintf("%s %s", m.icon, style.Render(m.name)))
+			fmt.Fprintf(&b, "%s %s", m.icon, style.Render(m.name))
 			if i < len(managers)-1 {
 				b.WriteString(mutedStyle.Render("  ·  "))
 			}
@@ -163,7 +163,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 	// Usage
 	b.WriteString(titleStyle.Render("  Usage:"))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("    %s %s\n", cmdStyle.Render("sarasa"), mutedStyle.Render("[command]")))
+	fmt.Fprintf(&b, "    %s %s\n", cmdStyle.Render("sarasa"), mutedStyle.Render("[command]"))
 	b.WriteString("\n")
 
 	// Commands
@@ -184,7 +184,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 
 	for _, c := range commands {
 		cmdName := cmdStyle.Render(fmt.Sprintf("%-12s", c.name))
-		b.WriteString(fmt.Sprintf("    %s %s\n", cmdName, descStyle.Render(c.desc)))
+		fmt.Fprintf(&b, "    %s %s\n", cmdName, descStyle.Render(c.desc))
 	}
 	b.WriteString("\n")
 
@@ -203,7 +203,7 @@ func styledHelp(cmd *cobra.Command, args []string) {
 
 	for _, f := range flags {
 		flagName := flagStyle.Render(fmt.Sprintf("%-16s", f.flag))
-		b.WriteString(fmt.Sprintf("    %s %s\n", flagName, descStyle.Render(f.desc)))
+		fmt.Fprintf(&b, "    %s %s\n", flagName, descStyle.Render(f.desc))
 	}
 	b.WriteString("\n")
 
@@ -224,8 +224,8 @@ func styledHelp(cmd *cobra.Command, args []string) {
 	}
 
 	for _, e := range examples {
-		b.WriteString(fmt.Sprintf("    %s\n", cmdStyle.Render(e.cmd)))
-		b.WriteString(fmt.Sprintf("      %s\n", mutedStyle.Render(e.desc)))
+		fmt.Fprintf(&b, "    %s\n", cmdStyle.Render(e.cmd))
+		fmt.Fprintf(&b, "      %s\n", mutedStyle.Render(e.desc))
 	}
 	b.WriteString("\n")
 
