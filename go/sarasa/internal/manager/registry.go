@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -27,7 +28,7 @@ func Get(name string, opts *Options) (Manager, error) {
 		return nil, fmt.Errorf("unknown manager: %s", name)
 	}
 
-	return factory(opts), nil
+	return factory(opts.Clone()), nil
 }
 
 // List returns all registered manager names.
@@ -39,6 +40,7 @@ func List() []string {
 	for name := range registry {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -49,7 +51,7 @@ func Available(opts *Options) []Manager {
 
 	var managers []Manager
 	for _, factory := range registry {
-		m := factory(opts)
+		m := factory(opts.Clone())
 		if m.IsAvailable() {
 			managers = append(managers, m)
 		}

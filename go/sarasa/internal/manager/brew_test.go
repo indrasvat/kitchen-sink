@@ -180,6 +180,11 @@ func TestBrewDeferredReason(t *testing.T) {
 			want:   "requires manual cask app cleanup or admin lease",
 		},
 		{
+			name:   "timeout",
+			output: "command timed out after 30m0s: signal: killed",
+			want:   "requires manual cask upgrade after command timeout",
+		},
+		{
 			name:   "untrusted tap",
 			output: "Error: Refusing to load formula cloudflare/cloudflare/warp from untrusted tap cloudflare/cloudflare.",
 			want:   "requires explicit brew tap trust",

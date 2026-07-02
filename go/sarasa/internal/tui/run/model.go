@@ -26,12 +26,13 @@ type PackageStatus struct {
 
 // ManagerResult holds the upgrade results for a manager.
 type ManagerResult struct {
-	Name      string
-	Packages  []*PackageStatus
-	Status    string // "pending", "checking", "upgrading", "done", "error"
-	Error     error
-	Duration  time.Duration
-	StartTime time.Time
+	Name         string
+	Packages     []*PackageStatus
+	Status       string // "pending", "checking", "upgrading", "done", "error"
+	Error        error
+	CleanupError error
+	Duration     time.Duration
+	StartTime    time.Time
 }
 
 // Model is the bubbletea model for the run command.
@@ -47,6 +48,7 @@ type Model struct {
 	skipCleanup bool
 	running     bool
 	done        bool
+	cleaningUp  bool
 	startTime   time.Time
 	width       int
 	height      int
@@ -55,6 +57,9 @@ type Model struct {
 	totalUpgraded int
 	totalFailed   int
 	totalSkipped  int
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // ManagerConfigProvider provides per-manager config.
@@ -72,6 +77,9 @@ type (
 		result   *manager.UpgradeResult
 		duration time.Duration
 		err      error
+	}
+	cleanupDoneMsg struct {
+		errors map[int]error
 	}
 )
 
@@ -100,6 +108,7 @@ func New(managers []manager.Manager, opts *manager.Options, cfg ManagerConfigPro
 		}
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	return Model{
 		managers:    managers,
 		opts:        opts,
@@ -109,6 +118,8 @@ func New(managers []manager.Manager, opts *manager.Options, cfg ManagerConfigPro
 		progress:    p,
 		dryRun:      dryRun,
 		skipCleanup: skipCleanup,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -131,24 +142,11 @@ func (m Model) Init() tea.Cmd {
 func (m Model) runManager(index int) tea.Cmd {
 	mgr := m.managers[index]
 	dryRun := m.dryRun
-	skipCleanup := m.skipCleanup
 
 	return func() tea.Msg {
-		ctx := context.Background()
-
 		start := time.Now()
-		result, err := mgr.Upgrade(ctx, dryRun)
+		result, err := mgr.Upgrade(m.ctx, dryRun)
 		duration := time.Since(start)
-
-		// Run cleanup if not dry run and not skipped
-		if err == nil && !dryRun && !skipCleanup {
-			if cleanupErr := mgr.Cleanup(ctx); cleanupErr != nil {
-				logger.WithManager(mgr.Name()).Warn("Cleanup failed",
-					"error", cleanupErr.Error(),
-					"action", "cleanup",
-				)
-			}
-		}
 
 		return managerDoneMsg{
 			index:    index,
@@ -159,12 +157,34 @@ func (m Model) runManager(index int) tea.Cmd {
 	}
 }
 
+func (m Model) cleanupManagers() tea.Cmd {
+	return func() tea.Msg {
+		cleanupErrors := make(map[int]error)
+		for i, mgr := range m.managers {
+			if m.results[i].Status == "error" {
+				continue
+			}
+			if err := mgr.Cleanup(m.ctx); err != nil {
+				logger.WithManager(mgr.Name()).Warn("Cleanup failed",
+					"error", err.Error(),
+					"action", "cleanup",
+				)
+				cleanupErrors[i] = err
+			}
+		}
+		return cleanupDoneMsg{errors: cleanupErrors}
+	}
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
+			if m.cancel != nil {
+				m.cancel()
+			}
 			return m, tea.Quit
 		}
 
@@ -206,6 +226,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result.Error = msg.err
 			m.totalFailed++
 		} else {
+			if msg.result == nil {
+				msg.result = &manager.UpgradeResult{}
+			}
 			result.Status = "done"
 			// Convert result packages to status
 			for _, pkg := range msg.result.Upgraded {
@@ -233,10 +256,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Check if all managers are done
 		if m.activeCount == 0 {
+			if !m.dryRun && !m.skipCleanup && m.ctx.Err() == nil {
+				m.cleaningUp = true
+				return m, tea.Batch(m.spinner.Tick, m.cleanupManagers())
+			}
 			m.running = false
 			m.done = true
 		}
 
+		return m, nil
+
+	case cleanupDoneMsg:
+		m.cleaningUp = false
+		m.running = false
+		m.done = true
+		for index, err := range msg.errors {
+			m.results[index].CleanupError = err
+			m.totalFailed++
+		}
 		return m, nil
 	}
 
@@ -257,28 +294,28 @@ func (m Model) View() string {
 		headerText = ui.StyleHeader.Render("SARASA UPGRADE")
 	}
 
-	if m.running {
-		b.WriteString(fmt.Sprintf("  %s %s  %s Upgrading packages...\n", headerIcon, headerText, m.spinner.View()))
-	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n", headerIcon, headerText))
+	switch {
+	case m.cleaningUp:
+		fmt.Fprintf(&b, "  %s %s  %s Cleaning up...\n", headerIcon, headerText, m.spinner.View())
+	case m.running:
+		fmt.Fprintf(&b, "  %s %s  %s Upgrading packages...\n", headerIcon, headerText, m.spinner.View())
+	default:
+		fmt.Fprintf(&b, "  %s %s\n", headerIcon, headerText)
 	}
 	b.WriteString("\n")
 
 	// Progress bar (only during upgrade)
-	if m.running && !m.dryRun {
+	if m.running && !m.dryRun && !m.cleaningUp {
 		elapsed := time.Since(m.startTime)
 		completed := len(m.managers) - m.activeCount
 		progressPct := float64(completed) / float64(len(m.managers))
-		b.WriteString(fmt.Sprintf("  %s  %s\n\n", m.progress.ViewAs(progressPct), ui.StyleDuration.Render(formatDuration(elapsed))))
+		fmt.Fprintf(&b, "  %s  %s\n\n", m.progress.ViewAs(progressPct), ui.StyleDuration.Render(formatDuration(elapsed)))
 	}
 
 	// Manager panels
 	panelWidth := 45
-	if m.width >= 90 {
-		panelWidth = min(76, m.width-6)
-	}
-	if m.width > 0 && m.width < 60 {
-		panelWidth = m.width - 6
+	if m.width > 0 {
+		panelWidth = min(76, max(20, m.width-6))
 	}
 
 	for _, result := range m.results {
@@ -314,7 +351,7 @@ func (m Model) renderManagerPanel(result *ManagerResult, width int) string {
 		content.WriteString(ui.StyleMuted.Render("waiting..."))
 	case "upgrading":
 		elapsed := time.Since(result.StartTime)
-		content.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), ui.StyleDuration.Render(formatDuration(elapsed))))
+		fmt.Fprintf(&content, "%s %s", m.spinner.View(), ui.StyleDuration.Render(formatDuration(elapsed)))
 	case "error":
 		content.WriteString(ui.StyleError.Render(ui.IconCross + " " + result.Error.Error()))
 	case "done":
@@ -322,7 +359,7 @@ func (m Model) renderManagerPanel(result *ManagerResult, width int) string {
 			content.WriteString(ui.StyleSuccess.Render(ui.IconCheck + " Already up to date"))
 		} else {
 			durationStr := ui.StyleDuration.Render(fmt.Sprintf("(%s)", formatDuration(result.Duration)))
-			content.WriteString(fmt.Sprintf("%s\n", durationStr))
+			fmt.Fprintf(&content, "%s\n", durationStr)
 
 			// Package list
 			for i, pkg := range result.Packages {
@@ -360,11 +397,17 @@ func (m Model) renderManagerPanel(result *ManagerResult, width int) string {
 					reasonTag = " " + ui.StyleMethodTag.Render("· "+pkg.Package.SkipReason)
 				}
 
-				content.WriteString(fmt.Sprintf("  %s %s  %s %s %s%s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag, reasonTag))
+				fmt.Fprintf(&content, "  %s %s  %s %s %s%s%s%s", statusIcon, pkgName, current, arrow, latest, majorTag, methodTag, reasonTag)
 				if i < len(result.Packages)-1 {
 					content.WriteString("\n")
 				}
 			}
+		}
+		if result.CleanupError != nil {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString(ui.StyleWarning.Render(ui.IconWarning + " cleanup failed: " + result.CleanupError.Error()))
 		}
 	}
 
@@ -414,11 +457,11 @@ func (m Model) renderSummary() string {
 
 	separator := ui.StyleMuted.Render(" · ")
 	summaryLine := strings.Join(parts, separator)
-	b.WriteString(fmt.Sprintf("\n  %s  %s\n", summaryIcon, summaryLine))
+	fmt.Fprintf(&b, "\n  %s  %s\n", summaryIcon, summaryLine)
 
 	if m.dryRun && m.totalSkipped > 0 {
 		cmdStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary)
-		b.WriteString(fmt.Sprintf("     Run %s to apply upgrades\n", cmdStyle.Render("sarasa run")))
+		fmt.Fprintf(&b, "     Run %s to apply upgrades\n", cmdStyle.Render("sarasa run"))
 	}
 
 	b.WriteString("\n")

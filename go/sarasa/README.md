@@ -92,6 +92,31 @@ Homebrew cask upgrades that need access to app locations such as
 trust are deferred as skipped packages instead of being retried as noisy
 scheduled-run failures. Formula upgrades continue to run normally.
 
+## Run Semantics
+
+`sarasa run` executes available managers concurrently in TUI, styled/plain, and
+JSON modes. Results are reported in the configured manager order, not completion
+order. Cleanup runs only after all upgrade phases finish, so a cleanup step
+cannot mutate package-manager state while another manager is still upgrading.
+
+Only one Sarasa run may execute at a time on a host. A non-blocking lock at
+`$XDG_CACHE_HOME/sarasa/run.lock`, or `~/Library/Caches/sarasa/run.lock` when
+`XDG_CACHE_HOME` is unset, causes overlapping launchd/manual runs to fail fast
+with `another sarasa run is already in progress`.
+
+Child commands run with a launchd-safe PATH and non-interactive environment.
+On Unix, timeout or cancellation signals the whole process group before killing
+it, so installer subprocesses are not left running after Sarasa exits.
+
+Homebrew uses scoped timeouts:
+
+| Operation | Timeout |
+| --- | ---: |
+| metadata (`outdated`, `info`, cache lookup) | 2m |
+| `brew update` | 10m |
+| `brew upgrade` per package | 30m |
+| `brew cleanup` / `autoremove` | 10m |
+
 ## Custom Tools
 
 Custom tools are recipes. Sarasa runs them through the same status, dry-run,
@@ -256,12 +281,22 @@ Local checks:
 ```bash
 make test
 make lint
+go test -race ./...
 ```
 
 Visual checks use shux so TUI rendering is verified in a real PTY:
 
 ```bash
+.shux/scripts/validate-run-tui.sh
+.shux/scripts/validate-run-tui-real-brew.sh
 .shux/scripts/capture-run-dry-run.sh
 .shux/scripts/capture-custom-dry-run.sh
 .shux/scripts/capture-run-json.sh
 ```
+
+`validate-run-tui.sh` builds a deterministic fake Sarasa binary, runs the real
+TUI through shux at `80x24` and `120x40`, captures PNG frames, and verifies that
+all fake managers start before any manager finishes.
+`validate-run-tui-real-brew.sh` runs the built Sarasa binary through the real
+Brew manager path against a fake `brew` executable, then verifies a controlled
+state-changing upgrade from `1.0.0` to `1.1.0`.

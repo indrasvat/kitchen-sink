@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/indrasvat/sarasa/internal/process"
 	"github.com/indrasvat/sarasa/internal/retry"
 )
 
@@ -28,6 +29,7 @@ type Options struct {
 	Timeout     time.Duration // Command timeout (default: 5m)
 	Retry       bool          // Whether to retry on failure
 	RetryConfig retry.Config  // Retry configuration
+	Env         map[string]string
 }
 
 // DefaultOptions returns default execution options.
@@ -53,11 +55,14 @@ func Run(ctx context.Context, opts Options, name string, args ...string) (*Resul
 		defer cancel()
 
 		cmd := exec.CommandContext(cmdCtx, name, args...)
+		process.Configure(cmd, opts.Env)
+		markDone := configureCancel(cmd)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
 		err := cmd.Run()
+		markDone()
 		result.Stdout = stdout.Bytes()
 		result.Stderr = stderr.Bytes()
 		result.Duration = time.Since(start)

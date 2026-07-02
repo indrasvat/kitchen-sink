@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/indrasvat/sarasa/internal/logger"
 	"github.com/indrasvat/sarasa/internal/manager"
+	"github.com/indrasvat/sarasa/internal/runengine"
+	"github.com/indrasvat/sarasa/internal/runlock"
 	"github.com/indrasvat/sarasa/internal/signal"
 	runTUI "github.com/indrasvat/sarasa/internal/tui/run"
 	"github.com/indrasvat/sarasa/internal/ui"
@@ -85,6 +88,15 @@ type RunManagerResult struct {
 }
 
 func runRun(_ *cobra.Command, _ []string) error {
+	lock, err := runlock.Acquire()
+	if err != nil {
+		if errors.Is(err, runlock.ErrAlreadyRunning) {
+			return runlock.ErrAlreadyRunning
+		}
+		return fmt.Errorf("failed to acquire run lock: %w", err)
+	}
+	defer func() { _ = lock.Close() }()
+
 	cfg := GetConfig()
 	log := logger.Get()
 
@@ -140,7 +152,7 @@ func runRun(_ *cobra.Command, _ []string) error {
 	case ui.ModeTUI:
 		return runRunTUI(managers, opts, cfgWrapper)
 	case ui.ModeStyled, ui.ModePlain:
-		return runRunPlain(managers, opts, cfgWrapper, mode == ui.ModeStyled)
+		return runRunPlain(managers, cfgWrapper, mode == ui.ModeStyled)
 	}
 
 	return nil
@@ -153,73 +165,43 @@ func runRunJSON(managerNames []string, opts *manager.Options, cfg *configWrapper
 	output := RunOutput{
 		DryRun:   opts.DryRun,
 		Success:  true,
-		Managers: make([]RunManagerResult, 0, len(managerNames)),
+		Managers: make([]RunManagerResult, len(managerNames)),
 	}
-	overallStart := time.Now()
-
-	for _, name := range managerNames {
-		result := RunManagerResult{Name: name}
-
-		m, err := manager.Get(name, opts)
+	managers := make([]manager.Manager, 0, len(managerNames))
+	managerIndexes := make([]int, 0, len(managerNames))
+	for i, name := range managerNames {
+		m, err := manager.Get(name, opts.CloneWithSkipList(cfg.GetSkipList(name)))
 		if err != nil {
-			result.Error = err.Error()
+			result := RunManagerResult{Name: name, Error: err.Error()}
 			output.Success = false
 			output.Summary.ManagerErrors++
-			output.Managers = append(output.Managers, result)
+			output.Managers[i] = result
 			continue
 		}
-
-		result.Available = m.IsAvailable()
-		if !result.Available {
-			output.Managers = append(output.Managers, result)
+		if !m.IsAvailable() {
+			output.Managers[i] = RunManagerResult{Name: name, Available: false}
 			continue
 		}
-
-		opts.SkipList = cfg.GetSkipList(name)
-		logger.LogStart(m.Name())
-		start := time.Now()
-		upgradeResult, err := m.Upgrade(ctx, opts.DryRun)
-		result.DurationMs = time.Since(start).Milliseconds()
-		if err != nil {
-			result.Error = err.Error()
-			output.Success = false
-			output.Summary.ManagerErrors++
-			logger.LogComplete(m.Name(), 0, 1, result.DurationMs)
-			output.Managers = append(output.Managers, result)
-			continue
-		}
-		if upgradeResult == nil {
-			upgradeResult = &manager.UpgradeResult{}
-		}
-
-		result.Upgraded = upgradeResult.Upgraded
-		result.Failed = upgradeResult.Failed
-		if opts.DryRun {
-			result.WouldUpgrade = upgradeResult.Skipped
-			output.Summary.WouldUpgrade += len(upgradeResult.Skipped)
-		} else {
-			result.Skipped = upgradeResult.Skipped
-			output.Summary.Skipped += len(upgradeResult.Skipped)
-		}
-		output.Summary.Upgraded += len(upgradeResult.Upgraded)
-		output.Summary.Failed += len(upgradeResult.Failed)
-		if len(upgradeResult.Failed) > 0 {
-			output.Success = false
-		}
-
-		if !opts.DryRun && !opts.SkipCleanup {
-			if err := m.Cleanup(ctx); err != nil {
-				result.CleanupError = err.Error()
-				output.Success = false
-				output.Summary.ManagerErrors++
-			}
-		}
-
-		logger.LogComplete(m.Name(), len(upgradeResult.Upgraded), len(upgradeResult.Failed), result.DurationMs)
-		output.Managers = append(output.Managers, result)
+		managers = append(managers, m)
+		managerIndexes = append(managerIndexes, i)
 	}
 
-	output.DurationMs = time.Since(overallStart).Milliseconds()
+	runOutput := runengine.Runner{
+		DryRun:         opts.DryRun,
+		SkipCleanup:    opts.SkipCleanup,
+		ConfigProvider: cfg,
+	}.Run(ctx, managers)
+	output.DurationMs = runOutput.Duration.Milliseconds()
+	output.Success = output.Success && runOutput.Success
+	output.Summary.Upgraded += runOutput.Summary.Upgraded
+	output.Summary.Failed += runOutput.Summary.Failed
+	output.Summary.Skipped += runOutput.Summary.Skipped
+	output.Summary.WouldUpgrade += runOutput.Summary.WouldUpgrade
+	output.Summary.ManagerErrors += runOutput.Summary.ManagerErrors
+	for i, result := range toRunManagerResults(runOutput, opts.DryRun) {
+		output.Managers[managerIndexes[i]] = result
+	}
+
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return err
@@ -269,11 +251,36 @@ func runRunTUI(managers []manager.Manager, opts *manager.Options, cfg runTUI.Man
 	return nil
 }
 
+func toRunManagerResults(output runengine.Output, dryRun bool) []RunManagerResult {
+	results := make([]RunManagerResult, 0, len(output.Managers))
+	for _, managerResult := range output.Managers {
+		result := RunManagerResult{
+			Name:       managerResult.Name,
+			Available:  managerResult.Available,
+			DurationMs: managerResult.Duration.Milliseconds(),
+			Upgraded:   managerResult.Upgraded,
+			Failed:     managerResult.Failed,
+		}
+		if dryRun {
+			result.WouldUpgrade = managerResult.Skipped
+		} else {
+			result.Skipped = managerResult.Skipped
+		}
+		if managerResult.Error != nil {
+			result.Error = managerResult.Error.Error()
+		}
+		if managerResult.CleanupError != nil {
+			result.CleanupError = managerResult.CleanupError.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 //nolint:gocyclo // plain-text renderer with many formatting conditionals
-func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.ManagerConfigProvider, styled bool) error {
+func runRunPlain(managers []manager.Manager, cfg runTUI.ManagerConfigProvider, styled bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background())
 	defer cancel()
-	log := logger.Get()
 
 	// Color helper
 	c := func(code, text string) string {
@@ -328,45 +335,24 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 	fmt.Println(c(dim, "  ─────────────────────────────────────────"))
 	fmt.Println()
 
-	// Run upgrades for each manager
-	totalUpgraded := 0
-	totalFailed := 0
-	totalSkipped := 0
-	overallStart := time.Now()
+	runOutput := runengine.Runner{
+		DryRun:         runDryRun,
+		SkipCleanup:    runSkipCleanup,
+		ConfigProvider: cfg,
+	}.Run(ctx, managers)
 
-	for _, m := range managers {
-		// Check for cancellation
-		if ctx.Err() != nil {
-			fmt.Printf("\n  %s %s\n\n", c(yellow, ui.IconWarning), c(yellow, "Interrupted"))
-			break
-		}
-
-		// Set skip list for this manager
-		opts.SkipList = cfg.GetSkipList(m.Name())
-
-		mColor := managerColor(m.Name())
+	for _, result := range runOutput.Managers {
+		mColor := managerColor(result.Name)
 		icon := ""
 		if styled {
-			icon = ui.ManagerIcon(m.Name()) + " "
+			icon = ui.ManagerIcon(result.Name) + " "
 		}
 
 		// Manager header
-		fmt.Printf("  %s%s\n", icon, c(bold+mColor, strings.ToUpper(m.Name())))
+		fmt.Printf("  %s%s\n", icon, c(bold+mColor, strings.ToUpper(result.Name)))
 
-		logger.LogStart(m.Name())
-		start := time.Now()
-
-		// Run upgrade
-		result, err := m.Upgrade(ctx, runDryRun)
-		duration := time.Since(start)
-
-		if err != nil {
-			log.Error("Manager upgrade failed",
-				"manager", m.Name(),
-				"error", err.Error(),
-			)
-			fmt.Printf("    %s %s\n\n", c(red, ui.IconCross), c(red, err.Error()))
-			totalFailed++
+		if result.Error != nil {
+			fmt.Printf("    %s %s\n\n", c(red, ui.IconCross), c(red, result.Error.Error()))
 			continue
 		}
 
@@ -434,30 +420,22 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 			}
 		}
 
+		if result.CleanupError != nil {
+			hasOutput = true
+			fmt.Printf("    %s %s\n",
+				c(yellow, ui.IconWarning),
+				c(yellow, "cleanup failed: "+result.CleanupError.Error()),
+			)
+		}
+
 		if !hasOutput {
 			fmt.Printf("    %s %s\n", c(green, ui.IconCheck), c(green, "Already up to date"))
 		}
 
-		totalUpgraded += len(result.Upgraded)
-		totalFailed += len(result.Failed)
-		totalSkipped += len(result.Skipped)
-
-		// Run cleanup
-		if !runDryRun && !runSkipCleanup {
-			if err := m.Cleanup(ctx); err != nil {
-				log.Warn("Cleanup failed",
-					"manager", m.Name(),
-					"error", err.Error(),
-				)
-			}
-		}
-
-		logger.LogComplete(m.Name(), len(result.Upgraded), len(result.Failed), duration.Milliseconds())
 		fmt.Println()
 	}
 
 	// Summary
-	overallDuration := time.Since(overallStart)
 	fmt.Println(c(dim, "  ─────────────────────────────────────────"))
 	fmt.Println()
 
@@ -465,42 +443,42 @@ func runRunPlain(managers []manager.Manager, opts *manager.Options, cfg runTUI.M
 	var summaryParts []string
 
 	if runDryRun {
-		if totalFailed > 0 {
-			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", totalFailed)))
+		if runOutput.Summary.Failed > 0 {
+			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", runOutput.Summary.Failed)))
 		}
-		if totalSkipped > 0 {
-			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d to upgrade", totalSkipped)))
+		if runOutput.Summary.WouldUpgrade > 0 {
+			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d to upgrade", runOutput.Summary.WouldUpgrade)))
 		}
-		if totalFailed == 0 && totalSkipped == 0 {
+		if runOutput.Summary.Failed == 0 && runOutput.Summary.WouldUpgrade == 0 {
 			summaryParts = append(summaryParts, c(green, "All up to date"))
 		}
 	} else {
-		if totalUpgraded > 0 {
-			summaryParts = append(summaryParts, c(green, fmt.Sprintf("%d upgraded", totalUpgraded)))
+		if runOutput.Summary.Upgraded > 0 {
+			summaryParts = append(summaryParts, c(green, fmt.Sprintf("%d upgraded", runOutput.Summary.Upgraded)))
 		}
-		if totalFailed > 0 {
-			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", totalFailed)))
+		if runOutput.Summary.Failed > 0 || runOutput.Summary.ManagerErrors > 0 {
+			summaryParts = append(summaryParts, c(red, fmt.Sprintf("%d failed", runOutput.Summary.Failed+runOutput.Summary.ManagerErrors)))
 		}
-		if totalSkipped > 0 {
-			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d skipped", totalSkipped)))
+		if runOutput.Summary.Skipped > 0 {
+			summaryParts = append(summaryParts, c(brightMagenta, fmt.Sprintf("%d skipped", runOutput.Summary.Skipped)))
 		}
-		if totalUpgraded == 0 && totalFailed == 0 && totalSkipped == 0 {
+		if runOutput.Summary.Upgraded == 0 && runOutput.Summary.Failed == 0 && runOutput.Summary.ManagerErrors == 0 && runOutput.Summary.Skipped == 0 {
 			summaryParts = append(summaryParts, c(green, "All up to date"))
 		}
 	}
 
 	// Duration
-	durationStr := formatDuration(overallDuration)
+	durationStr := formatDuration(runOutput.Duration)
 	summaryParts = append(summaryParts, c(dim, durationStr))
 
 	// Print summary
 	summaryIcon := ui.IconSparkle
-	if totalFailed > 0 {
+	if runOutput.Summary.Failed > 0 || runOutput.Summary.ManagerErrors > 0 {
 		summaryIcon = ui.IconFailed
 	}
 	fmt.Printf("  %s  %s\n", summaryIcon, strings.Join(summaryParts, c(dim, " · ")))
 
-	if runDryRun && totalSkipped > 0 {
+	if runDryRun && runOutput.Summary.WouldUpgrade > 0 {
 		fmt.Printf("     Run %s to apply upgrades\n", c(brightCyan+bold, "sarasa run"))
 	}
 
