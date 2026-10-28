@@ -5,10 +5,11 @@
 # ]
 # ///
 
-import psutil
 import argparse
 import time
-from typing import List, Tuple
+
+import psutil
+
 
 class ProcessLister:
     """Class to list running processes sorted by memory usage (like Activity Monitor)."""
@@ -16,7 +17,7 @@ class ProcessLister:
     def __init__(self, limit: int = 10):
         self.limit = limit
 
-    def get_processes(self) -> List[Tuple[int, str, float, float]]:
+    def get_processes(self) -> list[tuple[int, str, float, float]]:
         """Retrieve processes with RSS memory (macOS Activity Monitor's 'Real Memory')."""
         processes = []
         

@@ -5,8 +5,9 @@
 # ]
 # ///
 
-import pygame
 import random
+
+import pygame
 from pygame import mixer
 
 # Initialize Pygame and mixer
@@ -165,10 +166,7 @@ class Game:
             # explosion_sound.play()
             self.enemies = [e for e in self.enemies if e.rect.y <= HEIGHT]
 
-        if self.player.lives <= 0:
-            return False
-
-        return True
+        return self.player.lives > 0
 
     def draw(self):
         screen.fill(BLACK)

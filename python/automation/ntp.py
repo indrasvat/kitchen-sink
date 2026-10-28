@@ -1,7 +1,7 @@
 import socket
 import struct
-import time
 import sys
+import time
 
 
 def get_ntp_time_with_local_tz(ntp_server):

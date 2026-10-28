@@ -1,7 +1,8 @@
-.PHONY: help install install-shell install-airdrop-autoheal install-python install-go uninstall lint lint-shell lint-python lint-go list ci test hooks tools tools-ci
+.PHONY: help install install-shell install-airdrop-autoheal install-python install-go uninstall lint lint-shell lint-python lint-go list ci test test-shell hooks tools tools-ci
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
+RUFF_VERSION := 0.17.3
 
 # Colors
 CYAN := \033[0;36m
@@ -28,6 +29,7 @@ install-shell: ## Install shell scripts
 	@ln -sf $(CURDIR)/shell/screenshot-tools/zellij-screenshot.sh $(BIN_DIR)/zellij-screenshot
 	@ln -sf $(CURDIR)/shell/utilities/upgrade-ai-cli.sh $(BIN_DIR)/upgrade-ai-cli
 	@ln -sf $(CURDIR)/shell/utilities/watch-and-notify.sh $(BIN_DIR)/watch-and-notify
+	@ln -sf "$(CURDIR)/shell/utilities/visarjana.sh" "$(BIN_DIR)/visarjana"
 	@ln -sf $(CURDIR)/shell/dev-setup/gameboy-dev-setup-macos.sh $(BIN_DIR)/gameboy-dev-setup
 	@echo -e "  $(GREEN)✓$(NC) Shell scripts linked"
 
@@ -57,6 +59,7 @@ uninstall: ## Remove installed scripts from ~/.local/bin
 	@rm -f $(BIN_DIR)/zellij-screenshot
 	@rm -f $(BIN_DIR)/upgrade-ai-cli
 	@rm -f $(BIN_DIR)/watch-and-notify
+	@rm -f "$(BIN_DIR)/visarjana"
 	@rm -f $(BIN_DIR)/gameboy-dev-setup
 	@rm -f $(BIN_DIR)/process-lister
 	@rm -f $(BIN_DIR)/github-issue-importer
@@ -74,8 +77,8 @@ lint-shell: ## Lint shell scripts with shellcheck
 	@echo -e "  $(GREEN)✓$(NC) Shell lint passed"
 
 lint-python: ## Lint Python scripts with ruff
-	@echo "Linting Python scripts..."
-	@uvx ruff check python/
+	@echo "Linting Python scripts with Ruff $(RUFF_VERSION)..."
+	@uvx ruff@$(RUFF_VERSION) check python/ tests/
 	@echo -e "  $(GREEN)✓$(NC) Python lint passed"
 
 lint-go: ## Lint Go code with golangci-lint
@@ -110,10 +113,13 @@ list: ## List all available scripts
 ci: lint test ## Run all lints and tests (used by pre-push hook)
 	@echo -e "$(GREEN)✓ All CI checks passed$(NC)"
 
-test: ## Run all tests
+test: test-shell ## Run all tests
 	@echo "Running Go tests..."
 	@cd $(CURDIR)/go/sarasa && $(MAKE) test
 	@echo -e "  $(GREEN)✓$(NC) Go tests passed"
+
+test-shell: ## Test visarjana with isolated processes and CLI fixtures
+	@uv run --script tests/test_visarjana.py
 
 hooks: ## Install git hooks via lefthook
 	@if command -v lefthook >/dev/null 2>&1; then \

@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, ClassVar, Self
 
 if TYPE_CHECKING:
     from browser_use import Browser
@@ -139,7 +139,7 @@ def get_main_screen_size() -> tuple[int, int]:
             return int(w), int(h)
 
     except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, ValueError) as e:
-        logging.debug(f"Screen size detection failed: {e}")
+        logging.getLogger("chatgpt_receipt").debug(f"Screen size detection failed: {e}")
 
     return 2560, 1440
 
@@ -268,7 +268,7 @@ class Config:
 class ColoredFormatter(logging.Formatter):
     """Custom formatter with colors and box-drawing characters."""
 
-    LEVEL_COLORS = {
+    LEVEL_COLORS: ClassVar[dict[int, str]] = {
         logging.DEBUG: Colors.CYAN,
         logging.INFO: Colors.GREEN,
         logging.WARNING: Colors.YELLOW,
@@ -588,16 +588,18 @@ def create_patched_bedrock_class(logger: logging.Logger):
                 action_logger = self._action_logger  # Capture for closure
 
                 def patched_validate(obj, *args, **kwargs):
-                    if isinstance(obj, dict):
-                        # Fix action names in the 'action' field
-                        if "action" in obj and isinstance(obj["action"], list):
-                            fixed_actions = fix_action_names_in_data(obj["action"])
-                            if fixed_actions != obj["action"]:
-                                if action_logger:
-                                    action_logger.debug(
-                                        f"Fixed action names: {obj['action']} -> {fixed_actions}"
-                                    )
-                                obj = {**obj, "action": fixed_actions}
+                    if (
+                        isinstance(obj, dict)
+                        and "action" in obj
+                        and isinstance(obj["action"], list)
+                    ):
+                        fixed_actions = fix_action_names_in_data(obj["action"])
+                        if fixed_actions != obj["action"]:
+                            if action_logger:
+                                action_logger.debug(
+                                    f"Fixed action names: {obj['action']} -> {fixed_actions}"
+                                )
+                            obj = {**obj, "action": fixed_actions}
                     return original_validate(obj, *args, **kwargs)
 
                 # Temporarily patch the model_validate method
@@ -679,7 +681,7 @@ def get_llm(config: Config, logger: logging.Logger):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def get_browser(config: Config, logger: logging.Logger) -> "Browser":
+def get_browser(config: Config, logger: logging.Logger) -> Browser:
     """Configure browser to use existing Chrome profile."""
     from browser_use import Browser, BrowserProfile
 
@@ -957,7 +959,7 @@ DO NOT send an email without a visible attachment. Report failure instead.
 
 
 async def run_download_agent(
-    config: Config, logger: logging.Logger, browser: "Browser"
+    config: Config, logger: logging.Logger, browser: Browser
 ) -> tuple[bool, str, list[Path], str]:
     """
     Execute the browser automation agent to download the receipt.
@@ -1030,15 +1032,12 @@ async def run_download_agent(
             logger.warning("Agent completed but returned no result")
             return False, "No result returned", downloaded_files, invoice_month_year
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(f"Download agent timed out after {config.timeout_download}s")
         return False, "Timeout", downloaded_files, invoice_month_year
 
     except Exception as e:
-        logger.error(f"Download agent failed: {type(e).__name__}: {e}")
-        import traceback
-
-        logger.debug(f"Traceback: {traceback.format_exc()}")
+        logger.exception("Download agent failed")
         return False, str(e), downloaded_files, invoice_month_year
 
 
@@ -1050,7 +1049,7 @@ async def run_download_agent(
 async def run_email_agent(
     config: Config,
     logger: logging.Logger,
-    browser: "Browser",
+    browser: Browser,
     receipt_path: Path,
     invoice_month_year: str,
 ) -> tuple[bool, str]:
@@ -1127,15 +1126,12 @@ async def run_email_agent(
             logger.warning("Email agent completed but returned no result")
             return False, "No result returned"
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(f"Email agent timed out after {config.timeout_email}s")
         return False, "Timeout"
 
     except Exception as e:
-        logger.error(f"Email agent failed: {type(e).__name__}: {e}")
-        import traceback
-
-        logger.debug(f"Traceback: {traceback.format_exc()}")
+        logger.exception("Email agent failed")
         return False, str(e)
 
 
@@ -1176,7 +1172,7 @@ async def run_agent(
                 await download_browser.stop()
             logger.info("Download browser closed")
         except Exception as e:
-            logger.debug(f"Download browser close note: {e}")
+            logger.debug(f"Download browser close note: {e}", exc_info=True)
 
     if not download_success:
         logger.error(f"Download failed: {download_message}")
@@ -1228,7 +1224,7 @@ async def run_agent(
                         await email_browser.stop()
                     logger.info("Email browser closed")
                 except Exception as e:
-                    logger.debug(f"Email browser close note: {e}")
+                    logger.debug(f"Email browser close note: {e}", exc_info=True)
 
             if email_success:
                 # IMMEDIATELY record email sent to prevent duplicates on retry
@@ -1367,7 +1363,7 @@ def archive_receipts(
             shutil.move(str(pdf), str(dest))
             logger.info(f"   Archived: {dest}")
             archived.append(dest)
-        except Exception as e:
+        except OSError as e:
             logger.error(f"   Failed to archive {pdf}: {e}")
 
     return archived
