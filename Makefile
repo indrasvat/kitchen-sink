@@ -2,6 +2,7 @@
 
 SHELL := /bin/bash
 BIN_DIR := $(HOME)/.local/bin
+RUFF_VERSION := 0.17.3
 
 # Colors
 CYAN := \033[0;36m
@@ -76,8 +77,8 @@ lint-shell: ## Lint shell scripts with shellcheck
 	@echo -e "  $(GREEN)✓$(NC) Shell lint passed"
 
 lint-python: ## Lint Python scripts with ruff
-	@echo "Linting Python scripts..."
-	@uvx ruff check python/ tests/
+	@echo "Linting Python scripts with Ruff $(RUFF_VERSION)..."
+	@uvx ruff@$(RUFF_VERSION) check python/ tests/
 	@echo -e "  $(GREEN)✓$(NC) Python lint passed"
 
 lint-go: ## Lint Go code with golangci-lint

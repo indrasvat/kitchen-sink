@@ -8,9 +8,10 @@
 # ///
 
 import sys
-import tomli
-import networkx as nx
 from pathlib import Path
+
+import networkx as nx
+import tomli
 from rich.console import Console
 
 console = Console()
@@ -26,7 +27,7 @@ def read_dependencies(project_path: Path) -> set[str]:
             data = tomli.load(f)
 
         return set(data.get("project", {}).get("dependencies", []))
-    except Exception as e:
+    except (OSError, tomli.TOMLDecodeError, TypeError, AttributeError) as e:
         console.print(f"[red]Failed to read dependencies from {pyproject_file}: {e}[/red]")
         return set()
 

@@ -26,9 +26,10 @@ import asyncio
 import csv
 import json
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from types import TracebackType
-from typing import Iterable, List, Optional, Type
+from typing import Self
 
 import click
 import httpx
@@ -68,18 +69,18 @@ class IssueImporter:
             timeout=timeout,
         )
 
-    async def __aenter__(self) -> "IssueImporter":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc: Optional[BaseException],
-        tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:
         await self._client.aclose()
 
-    async def import_issue(self, *, title: str, body: str, labels: List[str]) -> None:
+    async def import_issue(self, *, title: str, body: str, labels: list[str]) -> None:
         payload = {
             "issue": {
                 "title": title,
@@ -114,8 +115,7 @@ class IssueImporter:
 def iter_csv_rows(csv_path: Path) -> Iterable[dict[str, str]]:
     with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            yield row
+        yield from reader
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ def iter_csv_rows(csv_path: Path) -> Iterable[dict[str, str]]:
     show_default=True,
     help="Logging level",
 )
-def main(csv_file: Path, owner: str, repo: str, token: str | None, log_level: str) -> None:  # noqa: D401
+def main(csv_file: Path, owner: str, repo: str, token: str | None, log_level: str) -> None:
     """Import every issue in CSV_FILE into the specified GitHub repo."""
 
     load_dotenv()

@@ -7,7 +7,6 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
@@ -16,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "shell/utilities/visarjana.sh"
 BASH = shutil.which("bash")
@@ -222,6 +222,7 @@ class VisarjanaTest(unittest.TestCase):
         self.write_state()
         result = subprocess.run(
             [BASH, str(SCRIPT), *args],
+            check=False,
             env=self.env | env,
             input="",
             text=True,
@@ -556,6 +557,7 @@ class VisarjanaTest(unittest.TestCase):
         self.write_state()
         result = subprocess.run(
             [BASH, str(SCRIPT), "-n"],
+            check=False,
             env=self.env,
             text=True,
             capture_output=True,
