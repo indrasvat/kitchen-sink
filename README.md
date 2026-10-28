@@ -91,6 +91,7 @@ Two-script workflow for cloning your dev environment across Macs.
 |--------|-------------|
 | [`upgrade-ai-cli.sh`](shell/utilities/upgrade-ai-cli.sh) | Install/upgrade AI CLI tools (Claude Code, Gemini CLI, Codex, etc.) |
 | [`watch-and-notify.sh`](shell/utilities/watch-and-notify.sh) | Play sound notification on command output changes |
+| [`visarjana.sh`](shell/utilities/visarjana.sh) | Dismiss shux sessions/daemons, associated Orca terminals, and agent-browser leftovers |
 
 ```bash
 # Upgrade all AI CLI tools
@@ -99,6 +100,29 @@ Two-script workflow for cloning your dev environment across Macs.
 # Watch kubectl and notify on changes
 ./watch-and-notify.sh kubectl get po --watch --no-headers
 ```
+
+#### विसर्जन (Visarjana)
+
+Install with `make install-shell` from your permanent checkout; the command is
+`visarjana` (without `.sh`). Installation creates a symlink, so edits to the
+versioned script take effect immediately. Run `make uninstall` to remove the
+repo's installed commands.
+
+```bash
+visarjana --dry-run                  # Inspect the cleanup ledger
+visarjana                           # Review the ledger and confirm cleanup
+visarjana --yes --keep my-session    # Preserve a session by name or shux ID
+visarjana --yes --socket /tmp/example/shux.sock  # Limit cleanup to one shux daemon
+visarjana --dry-run --only browser --json       # Machine-readable preview
+```
+
+Cleanup covers the current user's sessions across repositories. Requires `jq`
+and `lsof`; shux, agent-browser, and Orca are used when available. Browser orphan
+detection targets macOS Chrome for Testing under `~/.agent-browser/browsers`.
+The script prints its plan before acting, rechecks process identities and socket
+ownership, preserves its own shux daemon, and spares daemons that gain sessions.
+`--force` permits SIGKILL after the grace period. See `visarjana --help` for
+filters, environment variables, and exit codes.
 
 ### AirDrop Auto-Heal
 
