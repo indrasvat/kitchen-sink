@@ -74,7 +74,12 @@ elif tool == "shux":
         p["lists"] = p.get("lists", 0) + 1
         if p["lists"] in p.get("fail_lists", []):
             fail("cannot list fixture sessions")
-        print(json.dumps({"sessions": p["sessions"]}))
+        if p.get("list_warning"):
+            print(p["list_warning"], file=sys.stderr)
+        responses = p.get("list_responses", {})
+        print(responses.get(str(p["lists"]), json.dumps({"sessions": p["sessions"]})))
+        if p["lists"] in p.get("fail_after_output", []):
+            fail("fixture list failed after valid JSON")
         if p.get("lose_socket_after_list"):
             p["socket_lost"] = True
         if p.get("reuse_after_list"):
@@ -431,6 +436,116 @@ class VisarjanaTest(unittest.TestCase):
         proc = row["proc"]
         self.run_script("-y", expected=1)
         self.assertIsNone(proc.poll())
+
+    def test_list_warnings_do_not_become_sessions(self) -> None:
+        row = self.daemon(
+            list_warning="WARN Daemon version mismatch — restarting daemon"
+        )
+        result = self.run_script("-n", "--json")
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        sessions = [e for e in events if e["event"] == "session" and "id" in e]
+        self.assertEqual([e["id"] for e in sessions], [row["sessions"][0]["id"]])
+        self.assertIn("WARN Daemon version mismatch", result.stderr)
+        self.assertNotIn("arithmetic", result.stderr)
+        self.assertEqual(self.state["actions"], [])
+
+    def test_list_warnings_allow_empty_daemon_cleanup(self) -> None:
+        row = self.daemon((), list_warning="WARN harmless diagnostic")
+        self.run_script("-y", "--grace", "1")
+        self.assertEqual(row["proc"].wait(timeout=5), -15)
+        self.assertEqual(self.state["actions"], [])
+
+    def test_list_warnings_do_not_affect_cleanup_or_relist(self) -> None:
+        row = self.daemon(list_warning="WARN harmless diagnostic")
+        result = self.run_script("-y", "--grace", "1")
+        self.assertEqual(
+            self.state["actions"], [["shux-kill", row["sessions"][0]["id"]]]
+        )
+        self.assertEqual(row["proc"].wait(timeout=5), -15)
+        self.assertNotIn("arithmetic", result.stderr)
+
+    def test_integral_timestamp_notation_is_normalized(self) -> None:
+        row = self.daemon()
+        for timestamp in ("1.0", "1e3", "-0", "9007199254740991"):
+            with self.subTest(timestamp=timestamp):
+                session = {**row["sessions"][0], "created_at": "TIMESTAMP"}
+                response = json.dumps({"sessions": [session]}).replace(
+                    '"TIMESTAMP"', timestamp
+                )
+                row["lists"] = 0
+                row["list_responses"] = {"1": response}
+                self.state["processes"] = [row]
+                result = self.run_script("-n", "--json")
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(self.state["actions"], [])
+
+    def test_invalid_session_list_is_spared(self) -> None:
+        row = self.daemon()
+        valid = row["sessions"][0]
+        invalid_rows = (
+            [{**valid, "id": value} for value in (None, "", 7, "bad\tid", "bad\nid")]
+            + [
+                {**valid, "name": value}
+                for value in (None, "", 7, "bad\tname", "bad\nname")
+            ]
+            + [{**valid, "scratch": value} for value in (None, "false", 0)]
+            + [
+                {**valid, "created_at": value}
+                for value in (None, "", "0", -1, 1.5, 1e100)
+            ]
+        )
+        responses = [
+            "",
+            "not json",
+            "null",
+            "{}",
+            '{"sessions":null}',
+            '{"sessions":{}}',
+            '{"sessions":[]}\n{"sessions":[]}',
+        ]
+        responses += [
+            json.dumps({"sessions": [valid, invalid]}) for invalid in invalid_rows
+        ]
+        for response in responses:
+            with self.subTest(response=response):
+                row["lists"] = 0
+                row["list_responses"] = {"1": response}
+                self.state["processes"] = [row]
+                result = self.run_script("-y", "--json", expected=1)
+                events = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertTrue(
+                    any(e["event"] == "list" and e["level"] == "error" for e in events)
+                )
+                self.assertFalse(
+                    any(e["event"] == "session" and "id" in e for e in events)
+                )
+                self.assertEqual(self.state["actions"], [])
+                self.assertIsNone(row["proc"].poll())
+
+    def test_unescaped_nul_response_is_rejected(self) -> None:
+        row = self.daemon((), list_responses={"1": '{"sessions":[]}\x00'})
+        self.run_script("-n", "--json", expected=1)
+        self.assertEqual(self.state["actions"], [])
+        self.assertIsNone(row["proc"].poll())
+
+    def test_failed_list_with_valid_json_preserves_daemon(self) -> None:
+        row = self.daemon((), fail_after_output=[1])
+        result = self.run_script("-n", "--json", expected=1)
+        self.assertIn("fixture list failed after valid JSON", result.stderr)
+        self.assertEqual(self.state["actions"], [])
+        self.assertIsNone(row["proc"].poll())
+
+    def test_failed_relist_with_valid_json_preserves_daemon(self) -> None:
+        row = self.daemon((), fail_after_output=[2])
+        self.run_script("-y", expected=1)
+        self.assertEqual(self.state["actions"], [])
+        self.assertIsNone(row["proc"].poll())
+
+    def test_invalid_relist_preserves_daemon(self) -> None:
+        row = self.daemon((), list_responses={"2": '{"sessions":[{}]}'})
+        self.run_script("-y", expected=1)
+        self.assertIsNone(row["proc"].poll())
+        self.assertEqual(self.state["actions"], [])
 
     def test_reused_pid_is_spared(self) -> None:
         row = self.daemon(reuse_after_list=True)
