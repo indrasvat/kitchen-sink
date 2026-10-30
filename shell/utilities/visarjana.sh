@@ -246,7 +246,18 @@ daemon_socket() {
 owns() { [ -S "$2" ] && lsof_socks "$1" | grep -qxF -- "$2"; }
 sx() { local s=$1; shift; shux --socket "$s" "$@"; }
 # sessions SOCK → id \t name \t scratch \t created_at; scratch sessions (a running `lens run`) included
-sessions() { sx "$1" session list --format json --include-scratch | jq -r '.sessions[] | [.id, .name, (.scratch|tostring), (.created_at|tostring)] | @tsv'; }
+sessions() {
+    # Keep stderr outside the rows; validate the whole response before emitting any of them.
+    sx "$1" session list --format json --include-scratch | jq -sr '
+        def field: type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not);
+        if length == 1 and (.[0] | type == "object" and (.sessions | type == "array") and
+            all(.sessions[]; type == "object" and (.id | field) and (.name | field) and
+                (.scratch | type == "boolean") and
+                (.created_at | type == "number" and . >= 0 and . <= 9007199254740991 and floor == .)))
+        then .[0].sessions[] | [.id, .name, (.scratch|tostring), (.created_at|floor|tostring)] | @tsv
+        else error("invalid shux session list") end
+    '
+}
 ago() {
     local s=$(( $(date +%s) - $1 ))
     if [ "$s" -lt 120 ]; then echo "${s}s"; elif [ "$s" -lt 7200 ]; then echo "$((s / 60))m"
@@ -343,8 +354,8 @@ if [ "$WANT_SHUX" = 1 ]; then
             fi
             MATCHED_SOCKS+=("$(canon "$sock")")
             found=$((found + 1))
-            if ! list=$(sessions "$sock" 2>&1); then
-                ev error list "cannot list sessions on daemon $pid ($sock): $list" pid="$pid" socket="$sock"
+            if ! list=$(sessions "$sock"); then
+                ev error list "cannot list sessions on daemon $pid ($sock); left alone" pid="$pid" socket="$sock"
                 ERRORS=$((ERRORS + 1)); continue
             fi
             if [ "$pid" = "$HOST" ]; then
@@ -501,8 +512,8 @@ for row in ${D_ROWS[@]+"${D_ROWS[@]}"}; do
     if ! owns "$pid" "$sock"; then
         ev error socket "daemon ${AR}$pid${Z} no longer serves ${MU}$sock${Z}; left alone" pid="$pid"; ERRORS=$((ERRORS + 1)); continue
     fi
-    if ! left=$(sessions "$sock" 2>&1); then
-        ev error list "daemon ${AR}$pid${Z}: cannot re-list sessions, so it is left running: $left" pid="$pid"; ERRORS=$((ERRORS + 1)); continue
+    if ! left=$(sessions "$sock"); then
+        ev error list "daemon ${AR}$pid${Z}: cannot re-list sessions, so it is left running" pid="$pid"; ERRORS=$((ERRORS + 1)); continue
     fi
     unknown=0
     while IFS=$'\t' read -r id name _; do [ -n "$id" ] && { keep_hit "$name" "$id" || unknown=1; }; done <<<"$left"
