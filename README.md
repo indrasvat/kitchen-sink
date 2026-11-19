@@ -91,7 +91,7 @@ Two-script workflow for cloning your dev environment across Macs.
 |--------|-------------|
 | [`upgrade-ai-cli.sh`](shell/utilities/upgrade-ai-cli.sh) | Install/upgrade AI CLI tools (Claude Code, Gemini CLI, Codex, etc.) |
 | [`watch-and-notify.sh`](shell/utilities/watch-and-notify.sh) | Play sound notification on command output changes |
-| [`visarjana.sh`](shell/utilities/visarjana.sh) | Dismiss shux sessions/daemons, associated Orca terminals, and agent-browser leftovers |
+| [`visarjana.sh`](shell/utilities/visarjana.sh) | Sort shux daemons into orphan / idle / in use and dismiss only the abandoned ones, plus orphaned agent-browser Chromes |
 
 ```bash
 # Upgrade all AI CLI tools
@@ -109,20 +109,30 @@ versioned script take effect immediately. Run `make uninstall` to remove the
 repo's installed commands.
 
 ```bash
-visarjana --dry-run                  # Inspect the cleanup ledger
-visarjana                           # Review the ledger and confirm cleanup
-visarjana --yes --keep my-session    # Preserve a session by name or shux ID
-visarjana --yes --socket /tmp/example/shux.sock  # Limit cleanup to one shux daemon
-visarjana --dry-run --only browser --json       # Machine-readable preview
+visarjana --dry-run                     # What is running, sorted, and what would go
+visarjana                               # Review the ledger, confirm, dismiss the orphans
+visarjana --idle --idle-after 1d        # Also sessions nobody has touched for a day
+visarjana -y -s /tmp/x/shux/shux.sock --in-use  # Tear down a unit you own, Orca tab included
+visarjana --dry-run --json              # Machine-readable ledger, one category per daemon
 ```
 
-Cleanup covers the current user's sessions across repositories. Requires `jq`
-and `lsof`; shux, agent-browser, and Orca are used when available. Browser orphan
-detection targets macOS Chrome for Testing under `~/.agent-browser/browsers`.
-The script prints its plan before acting, rechecks process identities and socket
-ownership, preserves its own shux daemon, and spares daemons that gain sessions.
-`--force` permits SIGKILL after the grace period. See `visarjana --help` for
-filters, environment variables, and exit codes.
+Every shux daemon on the machine is sorted before anything happens:
+
+| Kind | Means | A sweep |
+|---|---|---|
+| orphan | no sessions, no connected client, no `shux` client process, up 10+ minutes | dismisses it |
+| idle | sessions whose panes are shells at a prompt (or exited), no clients, quiet for `--idle-after` (6h) | only with `--idle` |
+| in use | attached or connected to, a command or program running in a pane, recently active, under 10 minutes old, or running visarjana itself | never; only `-s SOCKET --in-use` |
+| unknown | its socket or session list cannot be read | leaves it alone |
+
+Activity is read from the operating system, not from shux: a pane is busy when its
+shell is not the foreground process on its terminal or has a child, and quiet
+time is the terminal's last write. Each daemon is sorted again just before it is
+touched and spared if it no longer qualifies. Open agent-browser sessions are
+listed with the command to close them, never closed, because nothing tells an
+abandoned one from a busy one; headless Chromes orphaned by a dead daemon are
+dismissed. Requires `jq` and `lsof`. `--force` permits SIGKILL after the grace
+period. See `visarjana --help` for every option, environment variable and exit code.
 
 ### AirDrop Auto-Heal
 
