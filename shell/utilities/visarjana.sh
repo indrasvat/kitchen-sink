@@ -223,8 +223,8 @@ ev() {
     # terminal: a pipe keeps one line per row, for grep.
     local head=${msg%%"  — "*} plain
     if [ "$COLS" -gt 0 ] && [ "$head" != "$msg" ]; then
-        plain="      $msg"; plain=${plain//$'\033'\[*([0-9;])m/}
-        if [ "${#plain}" -gt "$COLS" ]; then
+        plain="tag12  $msg"; plain=${plain//$'\033'\[*([0-9;])m/}   # the tag and its space take 7 columns
+        if [ "${#plain}" -ge "$COLS" ]; then
             printf '%s %s\n' "$tag" "$head"
             fold -s -w $((COLS - 18)) <<<"${msg#*"  — "}" | while IFS= read -r l; do printf '%16s%s%s%s\n' '' "$MU" "${l% }" "$Z"; done
             return
@@ -344,6 +344,8 @@ sessions() {
         else error("invalid shux session list") end
     '
 }
+# pl COUNT NOUN [PLURAL]: "1 shell", "2 shells"
+pl() { local w=$2; [ "$1" = 1 ] || w=${3:-${2}s}; echo "$1 $w"; }
 dur() {
     local s=$1
     if [ "$s" -lt 120 ]; then echo "${s}s"; elif [ "$s" -lt 7200 ]; then echo "$((s / 60))m"
@@ -464,10 +466,10 @@ probe() {
     # A busy pane is reason enough to stay; an idle one whose last write cannot be read says nothing.
     if [ -z "$busy" ] && [ "$seen" -lt "$ttys" ]; then CAT=unknown; WHY="cannot tell when its panes last wrote"; return; fi
 
-    [ "$clients" = 0 ] && [ "$conns" -gt 0 ] && why+=("$conns client connection(s)")
+    [ "$clients" = 0 ] && [ "$conns" -gt 0 ] && why+=("$(pl "$conns" "client connection")")
     [ -n "$busy" ] && why+=("running: $busy")
     if [ "$n" = 0 ]; then
-        [ "$ttys" -gt 0 ] && why+=("runs $ttys process(es) but lists no session")
+        [ "$ttys" -gt 0 ] && why+=("runs $(pl "$ttys" process processes) but lists no session")
         [ "$age" -lt "$ORPHAN_AGE" ] && why+=("started $(dur "$age") ago")
         if [ ${#why[@]} = 0 ]; then CAT=orphan; WHY="no sessions, no clients, up $(dur "$age")"; return; fi
     else
@@ -477,7 +479,7 @@ probe() {
         [ "$quiet" -lt "$IDLE_AFTER" ] && why+=("active $(dur "$quiet") ago")
         if [ ${#why[@]} = 0 ]; then
             CAT=idle
-            WHY="$n session(s), $([ "$ttys" -gt 0 ] && echo "$ttys shell(s) at a prompt" || echo 'no live panes'), quiet $(dur "$quiet"), no clients"
+            WHY="$(pl "$n" session), $([ "$ttys" -gt 0 ] && echo "$(pl "$ttys" shell) at a prompt" || echo 'no live panes'), quiet $(dur "$quiet"), no clients"
             return
         fi
     fi
@@ -656,8 +658,7 @@ fi
 
 section "Plan"
 total=$(( ${#D_ROWS[@]} + ${#T_ROWS[@]} + ${#O_ROWS[@]} ))
-# n COUNT NOUN [PLURAL]: "1 daemon", "3 daemons", with the count in bold
-n() { local w=$2; [ "$1" = 1 ] || w=${3:-${2}s}; echo "${B}$1${Z} $w"; }
+n() { local p; p=$(pl "$@"); echo "${B}${p%% *}${Z} ${p#* }"; }   # pl, with the count in bold
 ev info plan "dismiss  $(n ${#D_ROWS[@]} "shux daemon") · $(n "$N_SESS" session) · $(n ${#T_ROWS[@]} "Orca terminal") · $(n ${#O_ROWS[@]} "orphaned Chrome")" \
     shux_daemons="${#D_ROWS[@]}" shux_sessions="$N_SESS" orca_terminals="${#T_ROWS[@]}" orphans="${#O_ROWS[@]}" \
     shux_orphan="$N_ORPHAN" shux_idle="$N_IDLE" shux_in_use="$N_INUSE" shux_unknown="$N_UNKNOWN" shux_kept="$N_KEPT" browser_sessions="$N_BROWSER"
@@ -787,5 +788,5 @@ if [ "$ERRORS" = 0 ]; then
     ev ok finished "everything chosen was dismissed" errors=0
     exit 0
 fi
-ev error finished "$ERRORS item(s) were not dismissed; see above" errors="$ERRORS"
+ev error finished "$(pl "$ERRORS" item) not dismissed; see above" errors="$ERRORS"
 exit 1
