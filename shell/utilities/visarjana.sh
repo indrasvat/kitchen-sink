@@ -21,68 +21,90 @@ set -uo pipefail
 
 PROG=visarjana
 VERSION=2.0.0
+shopt -s extglob   # ev strips colour codes with *([0-9;])
 
-# Colour only for a person at a terminal: never under NO_COLOR, TERM=dumb, a pipe, or --json (cleared after parsing).
-paint() { [ -t "$1" ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; }
+# paint FD: colour on that stream? --color always/never decides; auto (the default) paints a terminal unless
+# NO_COLOR is set, or forces it through a pipe under FORCE_COLOR/CLICOLOR_FORCE; never with TERM=dumb or --json.
+COLOR=${VISARJANA_COLOR:-auto}
+paint() {
+    case "$COLOR" in always) return 0 ;; never) return 1 ;; esac
+    [ -z "${NO_COLOR:-}" ] || return 1
+    case "${FORCE_COLOR:-}${CLICOLOR_FORCE:-}" in '' | 0 | 00) ;; *) return 0 ;; esac
+    [ -t "$1" ] && [ "${TERM:-dumb}" != dumb ]
+}
 # One palette, by role:  HD heading · FL what you type · AR a value · MU muted detail ·
 #                        OK success · WN warning/attention · FA failure · KP kept/spared · B bold · Z reset
-if paint 1; then
-    HD=$'\033[1;35m'; FL=$'\033[1;36m'; AR=$'\033[36m'; MU=$'\033[2m'
-    OK=$'\033[32m'; WN=$'\033[33m'; FA=$'\033[31m'; KP=$'\033[34m'; B=$'\033[1m'; Z=$'\033[0m'
-else HD=; FL=; AR=; MU=; OK=; WN=; FA=; KP=; B=; Z=; fi
-if paint 2; then EFA=$'\033[1;31m'; EZ=$'\033[0m'; else EFA=; EZ=; fi
+palette() {
+    if paint 1; then
+        HD=$'\033[1;35m'; FL=$'\033[1;36m'; AR=$'\033[36m'; MU=$'\033[2m'
+        OK=$'\033[32m'; WN=$'\033[33m'; FA=$'\033[31m'; KP=$'\033[34m'; B=$'\033[1m'; Z=$'\033[0m'
+    else HD=; FL=; AR=; MU=; OK=; WN=; FA=; KP=; B=; Z=; fi
+    if paint 2; then EFA=$'\033[1;31m'; EZ=$'\033[0m'; else EFA=; EZ=; fi
+}
+WANT_COLOR=$COLOR   # validated after parsing; until then a bad value means auto
+case "$COLOR" in auto | always | never) ;; *) COLOR=auto ;; esac
+palette
 
 usage() {
     cat <<EOF
-${HD}$PROG${Z} ${MU}$VERSION${Z} — dismiss forgotten shux daemons and orphaned agent-browser Chromes, on any repo on this machine.
+${HD}$PROG${Z} ${MU}$VERSION${Z}  dismiss forgotten shux daemons and orphaned agent-browser Chromes on this machine
 
-${HD}Usage:${Z} ${FL}$PROG${Z} ${AR}[options]${Z}
+${HD}Usage${Z}  ${FL}$PROG${Z} ${AR}[options]${Z}
 
-${HD}Sorts what is running, shows it, asks, then dismisses only what is plainly abandoned:${Z}
-  ${OK}orphan${Z}    a shux daemon with no sessions and no clients, up 10 minutes or more     ${B}dismissed${Z}
-            a headless Chrome under ~/.agent-browser/browsers whose daemon is gone      ${B}dismissed${Z}
-  ${WN}idle${Z}      a shux daemon whose sessions hold only shells at a prompt (or exited panes),
-            with no clients, quiet for --idle-after                                   ${B}only with --idle${Z}
-  ${KP}in use${Z}    attached or connected to, a command or program running in a pane, active
-            within --idle-after, under 10 minutes old, or running this command         ${B}never in a sweep${Z}
-  ${FA}unknown${Z}   its socket or sessions cannot be read                                     ${B}left alone${Z}
-Open agent-browser sessions are listed, never closed: nothing tells an abandoned one from a busy one.
-To tear down a unit you own, name its daemon: ${FL}$PROG -s SOCKET --in-use${Z} (also closes the Orca
-terminal attached to it). It ${B}never${Z} touches your own Chrome, kind clusters, git, or files.
+${HD}What it finds${Z}  ${MU}it shows the ledger, asks, then dismisses only what is plainly abandoned${Z}
+  ${OK}orphan${Z}    a shux daemon with no sessions or clients, up 10m or more       ${B}dismissed${Z}
+  ${OK}${Z}          a headless Chrome whose agent-browser daemon is gone            ${B}dismissed${Z}
+  ${WN}idle${Z}      a shux daemon holding only shells at a prompt (or exited        ${B}only with --idle${Z}
+            panes), with no clients, quiet for --idle-after
+  ${KP}in use${Z}    attached or connected to, running a program in a pane,          ${B}never in a sweep${Z}
+            active within --idle-after, under 10m old, or running visarjana
+  ${FA}unknown${Z}   another shux build, or its socket, sessions or activity         ${B}left alone${Z}
+            cannot be read; the run then exits 1
 
-${HD}Options:${Z}
-  ${FL}-n, --dry-run${Z}         show the ledger and stop                       ${MU}[VISARJANA_DRY_RUN=1]${Z}
-  ${FL}-y, --yes${Z}             do not ask (needed when there is no terminal)  ${MU}[VISARJANA_YES=1]${Z}
-      ${FL}--idle${Z}            also dismiss idle daemons and their sessions   ${MU}[VISARJANA_IDLE=1]${Z}
-      ${FL}--idle-after${Z} ${AR}AGE${Z}  quiet this long counts as idle: 30m, 6h, 2d; at least 10m (default 6h)
-                                                                       ${MU}[VISARJANA_IDLE_AFTER]${Z}
-  ${FL}-s, --socket${Z} ${AR}PATH${Z}     only shux daemons on this socket; repeatable   ${MU}[VISARJANA_SOCKET=p1,p2]${Z}
-      ${FL}--in-use${Z}          dismiss the daemons named with -s even when in use (needs -s; no env)
-  ${FL}-k, --keep${Z} ${AR}NAME${Z}       spare the daemon holding this session (name, id or short id);
-                        a NAME that matches nothing stops the run; repeatable
-                                                                       ${MU}[VISARJANA_KEEP=a,b]${Z}
-  ${FL}-o, --only${Z} ${AR}WHAT${Z}       shux | browser                                 ${MU}[VISARJANA_ONLY]${Z}
-      ${FL}--no-orca${Z}         leave Orca terminals open                      ${MU}[VISARJANA_ORCA=0]${Z}
-  ${FL}-g, --grace${Z} ${AR}SECONDS${Z}   seconds to wait for an exit (default 5)       ${MU}[VISARJANA_GRACE]${Z}
-  ${FL}-f, --force${Z}           SIGKILL whatever outlives the grace period     ${MU}[VISARJANA_FORCE=1]${Z}
-      ${FL}--json${Z}            one JSON object per line, no colour; needs jq and -y or -n
+  Open agent-browser sessions are listed, never closed: nothing tells an abandoned one from a busy one
+  ${MU}(each line shows the command to close it)${Z}.
+  To tear down a unit you own, name its daemon: ${FL}$PROG -s SOCKET --in-use${Z} ${MU}(also closes its Orca tab)${Z}.
+  It ${B}never${Z} touches your own Chrome, kind clusters, git, or files.
+
+${HD}Options${Z}
+  ${FL}-n, --dry-run${Z}         show the ledger and stop                        ${MU}[VISARJANA_DRY_RUN=1]${Z}
+  ${FL}-y, --yes${Z}             do not ask (needed with no terminal)            ${MU}[VISARJANA_YES=1]${Z}
+      ${FL}--idle${Z}            also dismiss idle daemons and their sessions    ${MU}[VISARJANA_IDLE=1]${Z}
+      ${FL}--idle-after${Z} ${AR}AGE${Z}  quiet this long is idle: 30m, 6h, 2d            ${MU}[VISARJANA_IDLE_AFTER]${Z}
+                        at least 10m; default 6h
+  ${FL}-s, --socket${Z} ${AR}PATH${Z}     only shux daemons on this socket; repeatable    ${MU}[VISARJANA_SOCKET=p1,p2]${Z}
+      ${FL}--in-use${Z}          dismiss the -s daemons even when in use
+                        needs -s; never from the environment
+  ${FL}-k, --keep${Z} ${AR}NAME${Z}       spare the daemon holding this session           ${MU}[VISARJANA_KEEP=a,b]${Z}
+                        (name, id or short id); repeatable; a NAME that
+                        matches nothing stops the run
+  ${FL}-o, --only${Z} ${AR}WHAT${Z}       shux or browser                                 ${MU}[VISARJANA_ONLY]${Z}
+      ${FL}--no-orca${Z}         leave Orca terminals open                       ${MU}[VISARJANA_ORCA=0]${Z}
+  ${FL}-g, --grace${Z} ${AR}SECONDS${Z}   wait this long for an exit (default 5)          ${MU}[VISARJANA_GRACE]${Z}
+  ${FL}-f, --force${Z}           SIGKILL whatever outlives the grace period      ${MU}[VISARJANA_FORCE=1]${Z}
+      ${FL}--color${Z} ${AR}WHEN${Z}      auto, always or never (default auto)            ${MU}[VISARJANA_COLOR]${Z}
+      ${FL}--json${Z}            one JSON object per line (needs jq, and -y or -n)
   ${FL}-h, --help${Z}            this help
   ${FL}-V, --version${Z}         print the version
 
-${HD}Needs:${Z} jq and lsof (macOS ships lsof; brew install jq). Orca terminals need Orca's CLI:
-       \$ORCA_CLI_COMMAND, else \`orca\` on macOS, else \`orca-ide\` (never a bare \`orca\` on Linux).
+${HD}Colour${Z}  on for a terminal; off in a pipe, with ${AR}NO_COLOR${Z} set, ${AR}TERM=dumb${Z}, or ${FL}--json${Z}.
+        ${AR}FORCE_COLOR${Z} or ${AR}CLICOLOR_FORCE${Z} keeps it through a pipe; ${FL}--color${Z} overrides them all.
 
-${HD}Exit:${Z} ${OK}0${Z} everything chosen was dismissed, nothing to do, or a clean --dry-run
-      ${WN}1${Z} something chosen survived or changed under it, a daemon could not be read,
-        a command failed, or you answered no (a --dry-run that finds such a problem also exits 1)
-      ${FA}2${Z} usage error, a --keep that matches nothing, an unknown --socket,
-        or asked to act with no terminal and no -y
+${HD}Needs${Z}   jq and lsof ${MU}(macOS ships lsof; brew install jq)${Z}. Orca terminals need Orca's CLI:
+        \$ORCA_CLI_COMMAND, else \`orca\` on macOS, else \`orca-ide\` ${MU}(never a bare \`orca\` on Linux)${Z}.
 
-${HD}Examples:${Z}
-  ${FL}$PROG -n${Z}                              ${MU}# what is there, and what would go?${Z}
-  ${FL}$PROG${Z}                                 ${MU}# show, ask, dismiss the orphans${Z}
-  ${FL}$PROG --idle --idle-after 1d${Z}          ${MU}# also sessions nobody has touched for a day${Z}
+${HD}Exit${Z}    ${OK}0${Z}  everything chosen was dismissed, nothing to do, or a clean --dry-run
+        ${WN}1${Z}  something chosen survived or changed under it, a daemon could not be read,
+           a command failed, or you answered no ${MU}(a --dry-run that finds such a problem also exits 1)${Z}
+        ${FA}2${Z}  usage error, a --keep that matches nothing, an unknown --socket,
+           or asked to act with no terminal and no -y
+
+${HD}Examples${Z}
+  ${FL}$PROG -n${Z}                                    ${MU}# what is there, and what would go?${Z}
+  ${FL}$PROG${Z}                                       ${MU}# show, ask, dismiss the orphans${Z}
+  ${FL}$PROG --idle --idle-after 1d${Z}                ${MU}# also sessions nobody has touched for a day${Z}
   ${FL}$PROG -y -s /tmp/x/shux/shux.sock --in-use${Z}  ${MU}# tear down your own unit, tab and all${Z}
+  ${FL}$PROG -n --color=always | less -R${Z}           ${MU}# page through a long ledger, in colour${Z}
 EOF
 }
 
@@ -90,7 +112,7 @@ EOF
 truthy() { case "${1:-}" in 1 | true | yes | on) return 0 ;; *) return 1 ;; esac; }
 die_usage() { printf '%s%s:%s %s\n' "$EFA" "$PROG" "$EZ" "$1" >&2; printf "Try '%s --help'.\n" "$PROG" >&2; exit 2; }
 
-DRY=0; YES=0; FORCE=0; JSON=0; WANT_ORCA=1; IDLE=0; IN_USE=0
+DRY=0; YES=0; FORCE=0; JSON=0; WANT_ORCA=1; IDLE=0; IN_USE=0; SHOW=
 truthy "${VISARJANA_DRY_RUN:-}" && DRY=1
 truthy "${VISARJANA_YES:-}" && YES=1
 truthy "${VISARJANA_FORCE:-}" && FORCE=1
@@ -123,14 +145,21 @@ while [ $# -gt 0 ]; do
         --only=*) ONLY=${1#*=}; [ -n "$ONLY" ] || die_usage "--only= needs shux or browser" ;;
         -g | --grace) need_val "$@"; GRACE=$2; shift ;;
         --grace=*) GRACE=${1#*=} ;;
-        -h | --help) usage; exit 0 ;;
-        -V | --version) echo "${HD}$PROG${Z} ${MU}$VERSION${Z}"; exit 0 ;;
+        --color) need_val "$@"; WANT_COLOR=$2; shift ;;
+        --color=*) WANT_COLOR=${1#*=} ;;
+        -h | --help) SHOW=help ;;
+        -V | --version) SHOW=version ;;
         --) shift; [ $# -eq 0 ] || die_usage "unexpected argument: $1"; break ;;
         -*) die_usage "unknown option: $1" ;;
         *) die_usage "unexpected argument: $1" ;;
     esac
     shift
 done
+case "$WANT_COLOR" in
+    auto | always | never) COLOR=$WANT_COLOR; [ "$JSON" = 1 ] && COLOR=never; palette ;;
+    *) die_usage "--color takes auto, always or never, not '$WANT_COLOR'" ;;
+esac
+case "$SHOW" in help) usage; exit 0 ;; version) echo "${HD}$PROG${Z} ${MU}$VERSION${Z}"; exit 0 ;; esac
 case "$ONLY" in '' | shux | browser) ;; *) die_usage "--only takes shux or browser, not '$ONLY'" ;; esac
 case "$GRACE" in '' | *[!0-9]*) die_usage "--grace takes whole seconds, not '$GRACE'" ;; esac
 GRACE=${GRACE#"${GRACE%%[!0]*}"}; GRACE=${GRACE:-0}
@@ -167,7 +196,6 @@ if { [ "$WANT_SHUX" = 1 ] && command -v shux >/dev/null; } || { [ "$WANT_BROWSER
 fi
 
 # ------------------------------------------------------------------ output ---
-[ "$JSON" = 1 ] && { HD=; FL=; AR=; MU=; OK=; WN=; FA=; KP=; B=; Z=; EFA=; EZ=; }
 # ev LEVEL EVENT MESSAGE [key=value ...] — text for people, one JSON object per line with --json
 ev() {
     local lvl=$1 event=$2 msg=$3; shift 3
@@ -191,8 +219,26 @@ ev() {
         ok) tag="$OK  ok  $Z" ;; warn) tag="$WN warn $Z" ;; error) tag="$FA fail $Z" ;;
         plan) tag="$OK  go  $Z" ;; keep) tag="$KP stay $Z" ;; *) tag="$MU  ··  $Z" ;;
     esac
+    # A reason that would wrap goes on its own muted lines, folded at the terminal's width. Only on a
+    # terminal: a pipe keeps one line per row, for grep.
+    local head=${msg%%"  — "*} plain
+    if [ "$COLS" -gt 0 ] && [ "$head" != "$msg" ]; then
+        plain="      $msg"; plain=${plain//$'\033'\[*([0-9;])m/}
+        if [ "${#plain}" -gt "$COLS" ]; then
+            printf '%s %s\n' "$tag" "$head"
+            fold -s -w $((COLS - 18)) <<<"${msg#*"  — "}" | while IFS= read -r l; do printf '%16s%s%s%s\n' '' "$MU" "${l% }" "$Z"; done
+            return
+        fi
+    fi
     printf '%s %s\n' "$tag" "$msg"
 }
+# shown PATH: a path as a person reads it: /private/tmp is /tmp on macOS, and $HOME is ~
+shown() { local p=${1#/private}; case "$p" in "$HOME"/*) p="~${p#"$HOME"}" ;; esac; echo "$p"; }
+COLS=0
+# The width of the terminal on stdout. Inside $(…) stdout is a pipe, so stty reads the terminal through fd 3.
+if [ "$JSON" = 0 ] && [ -t 1 ]; then { COLS=$(stty size <&3 2>/dev/null); } 3>&1; COLS=${COLS#* }; fi
+case "$COLS" in '' | *[!0-9]*) COLS=0 ;; esac
+[ "$COLS" -ge 60 ] || COLS=0
 section() { [ "$JSON" = 1 ] || printf '\n%s%s%s\n' "$HD" "$1" "$Z"; }
 
 # ------------------------------------------------------------------- lock ---
@@ -405,7 +451,7 @@ probe() {
     [ "$pid" = "$HOST" ] && why+=("runs this $PROG")
     while IFS=$'\t' read -r csock cpid cargs; do
         [ "$csock" = "$(canon "$sock")" ] || continue
-        clients=$((clients + 1)); why+=("client pid $cpid: $cargs")
+        clients=$((clients + 1)); [ "${#cargs}" -le 60 ] || cargs="${cargs:0:59}…"; why+=("client pid $cpid: $cargs")
     done <<<"$CLIENTS"
     while IFS=$'\t' read -r b tt c; do
         [ -n "$b" ] || continue
@@ -476,7 +522,7 @@ if [ "$WANT_SHUX" = 1 ]; then
                     mention=0; for s in "${SOCKETS[@]}"; do case "$dargs" in *"$s"*) mention=1 ;; esac; done
                 fi
                 if [ "$mention" = 1 ]; then
-                    ev error socket "${FA}unknown${Z}  daemon ${AR}$pid${Z} (${MU}$dargs${Z}): cannot tell which socket it serves (its socket file may be gone); left alone — if it is truly stale: kill $pid" pid="$pid" category=unknown
+                    ev error socket "$(label unknown) daemon ${AR}$pid${Z}  ${MU}$dargs${Z}  — cannot tell which socket it serves (its socket file may be gone); left alone. If it is truly stale: kill $pid" pid="$pid" category=unknown
                     N_UNKNOWN=$((N_UNKNOWN + 1)); ERRORS=$((ERRORS + 1)); found=$((found + 1))
                 fi
                 continue
@@ -489,11 +535,11 @@ if [ "$WANT_SHUX" = 1 ]; then
             found=$((found + 1))
             if ! same_build "$sock"; then
                 N_UNKNOWN=$((N_UNKNOWN + 1)); ERRORS=$((ERRORS + 1))
-                ev error build "${FA}unknown${Z}  daemon ${AR}$pid${Z}  ${MU}$sock${Z}  — not this shux build (see: shux --socket $sock version); any other shux call would restart it and lose its sessions, so it is left alone" pid="$pid" socket="$sock" category=unknown
+                ev error build "$(label unknown) daemon ${AR}$pid${Z}  ${MU}$(shown "$sock")${Z}  — not this shux build (see: shux --socket $sock version); any other shux call would restart it and lose its sessions, so it is left alone" pid="$pid" socket="$sock" category=unknown
                 continue
             fi
             if ! list=$(sessions "$sock"); then
-                ev error list "${FA}unknown${Z}  daemon ${AR}$pid${Z} (${MU}$sock${Z}): cannot list its sessions; left alone" pid="$pid" socket="$sock" category=unknown
+                ev error list "$(label unknown) daemon ${AR}$pid${Z}  ${MU}$(shown "$sock")${Z}  — cannot list its sessions; left alone" pid="$pid" socket="$sock" category=unknown
                 N_UNKNOWN=$((N_UNKNOWN + 1)); ERRORS=$((ERRORS + 1)); continue
             fi
             probe "$pid" "$sock" "$list"
@@ -512,7 +558,7 @@ if [ "$WANT_SHUX" = 1 ]; then
             elif [ "$pid" != "$HOST" ] && chosen "$CAT"; then
                 lvl=plan; D_ROWS+=("$pid"$'\t'"$sock"$'\t'"$dargs"$'\t'"$ids")
             fi
-            ev "$lvl" daemon "$(label "$CAT") daemon ${AR}$pid${Z}  ${MU}$sock${Z}  — $note" pid="$pid" socket="$sock" category="$CAT" reason="$note"
+            ev "$lvl" daemon "$(label "$CAT") daemon ${AR}$pid${Z}  ${MU}$(shown "$sock")${Z}  — $note" pid="$pid" socket="$sock" category="$CAT" reason="$note"
             while IFS=$'\t' read -r id name scratch created; do
                 [ -n "$id" ] || continue
                 [ "$lvl" = plan ] && N_SESS=$((N_SESS + 1))
@@ -610,9 +656,12 @@ fi
 
 section "Plan"
 total=$(( ${#D_ROWS[@]} + ${#T_ROWS[@]} + ${#O_ROWS[@]} ))
-ev info plan "dismiss ${B}${#D_ROWS[@]}${Z} shux daemon(s) with ${B}${N_SESS}${Z} session(s), ${B}${#T_ROWS[@]}${Z} Orca terminal(s), ${B}${#O_ROWS[@]}${Z} orphaned Chrome(s). Seen: $N_ORPHAN orphan, $N_IDLE idle, $N_INUSE in use, $N_UNKNOWN unknown, $N_KEPT kept, $N_BROWSER browser session(s)" \
+# n COUNT NOUN [PLURAL]: "1 daemon", "3 daemons", with the count in bold
+n() { local w=$2; [ "$1" = 1 ] || w=${3:-${2}s}; echo "${B}$1${Z} $w"; }
+ev info plan "dismiss  $(n ${#D_ROWS[@]} "shux daemon") · $(n "$N_SESS" session) · $(n ${#T_ROWS[@]} "Orca terminal") · $(n ${#O_ROWS[@]} "orphaned Chrome")" \
     shux_daemons="${#D_ROWS[@]}" shux_sessions="$N_SESS" orca_terminals="${#T_ROWS[@]}" orphans="${#O_ROWS[@]}" \
     shux_orphan="$N_ORPHAN" shux_idle="$N_IDLE" shux_in_use="$N_INUSE" shux_unknown="$N_UNKNOWN" shux_kept="$N_KEPT" browser_sessions="$N_BROWSER"
+[ "$JSON" = 1 ] || ev info seen "seen     ${OK}$N_ORPHAN orphan${Z} · ${WN}$N_IDLE idle${Z} · ${KP}$N_INUSE in use${Z} · ${FA}$N_UNKNOWN unknown${Z} · $N_KEPT kept · $N_BROWSER browser session$([ "$N_BROWSER" = 1 ] || echo s)"
 [ "$N_IDLE" -gt 0 ] && [ "$IDLE" = 0 ] && [ "$IN_USE" = 0 ] && ev info hint "idle daemons stay; add ${FL}--idle${Z} to dismiss them too"
 [ "$N_INUSE" -gt 0 ] && [ "$IN_USE" = 0 ] && ev info hint "in-use daemons are never swept; to tear down one you own: ${FL}$PROG -s SOCKET --in-use${Z}"
 if [ "$total" = 0 ]; then
@@ -639,7 +688,7 @@ qualifies() {
     local pid=$1 sock=$2 dargs=$3 ids=$4 id name newcomers=""
     if ! still "$pid" "$dargs"; then ev ok gone "daemon ${AR}$pid${Z} already gone" pid="$pid"; return 2; fi
     if ! owns "$pid" "$sock"; then
-        ev error socket "daemon ${AR}$pid${Z} no longer serves ${MU}$sock${Z}; left alone" pid="$pid"; ERRORS=$((ERRORS + 1)); return 1
+        ev error socket "daemon ${AR}$pid${Z} no longer serves ${MU}$(shown "$sock")${Z}; left alone" pid="$pid"; ERRORS=$((ERRORS + 1)); return 1
     fi
     if ! LEFT=$(sessions "$sock") || ! snapshot; then
         ev error list "daemon ${AR}$pid${Z}: cannot look at it again, so it is left running" pid="$pid"; ERRORS=$((ERRORS + 1)); return 1
@@ -683,7 +732,7 @@ for row in ${D_ROWS[@]+"${D_ROWS[@]}"}; do
         ERRORS=$((ERRORS + 1)); continue
     fi
     # `shux daemon stop` finds a daemon by runtime dir, not socket, and misses some; SIGTERM is what it sends.
-    if stop "$pid" "$dargs" "shux daemon ${AR}$pid${Z} (${MU}$sock${Z})"; then D_STOPPED+=("$sock")
+    if stop "$pid" "$dargs" "shux daemon ${AR}$pid${Z} ${MU}$(shown "$sock")${Z}"; then D_STOPPED+=("$sock")
     else ERRORS=$((ERRORS + 1)); fi
 done
 # The ledger tied each attach to a daemon; close only after that daemon actually stopped.

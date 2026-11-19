@@ -312,6 +312,32 @@ class VisarjanaTest(unittest.TestCase):
         self.assertIn("--keep", self.run_script("--help").stdout)
         self.assertIn("visarjana 2.0.0", self.run_script("--version").stdout)
 
+    def test_colour_follows_flag_environment_and_pipe(self) -> None:
+        """Output here is a pipe: colour only when forced, never under --json, and the flag wins."""
+        self.daemon(())
+        cases = [
+            ((), {}, False),  # the harness sets NO_COLOR
+            ((), {"NO_COLOR": ""}, False),  # a pipe
+            ((), {"NO_COLOR": "", "FORCE_COLOR": "1"}, True),
+            ((), {"NO_COLOR": "", "CLICOLOR_FORCE": "1"}, True),
+            ((), {"NO_COLOR": "", "FORCE_COLOR": "0"}, False),
+            ((), {"FORCE_COLOR": "1"}, False),  # NO_COLOR beats FORCE_COLOR
+            (("--color=always",), {}, True),  # the flag beats NO_COLOR
+            (("--color", "never"), {"NO_COLOR": "", "FORCE_COLOR": "1"}, False),
+            ((), {"VISARJANA_COLOR": "always"}, True),
+            (("--color=never",), {"VISARJANA_COLOR": "always"}, False),
+        ]
+        for args, env, painted in cases:
+            for run in (("--help", *args), (*args, "--help"), ("-n", *args)):
+                with self.subTest(run=run, env=env):
+                    out = self.run_script(*run, **env).stdout
+                    self.assertEqual("\033[" in out, painted, out[:200])
+        json_out = self.run_script("-n", "--json", "--color=always").stdout
+        self.assertNotIn("\033", json_out)
+        self.events(self.run_script("-n", "--json", "--color=always"))  # still valid JSON
+        self.run_script("--color=sometimes", expected=2)
+        self.run_script("-n", VISARJANA_COLOR="sometimes", expected=2)
+
     def test_invalid_options(self) -> None:
         for args in (
             ("--unknown",),

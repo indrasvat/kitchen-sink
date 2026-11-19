@@ -114,6 +114,7 @@ visarjana                               # Review the ledger, confirm, dismiss th
 visarjana --idle --idle-after 1d        # Also sessions nobody has touched for a day
 visarjana -y -s /tmp/x/shux/shux.sock --in-use  # Tear down a unit you own, Orca tab included
 visarjana --dry-run --json              # Machine-readable ledger, one category per daemon
+visarjana -n --color=always | less -R   # Page a long ledger in colour
 ```
 
 Every shux daemon on the machine is sorted before anything happens:
@@ -123,7 +124,7 @@ Every shux daemon on the machine is sorted before anything happens:
 | orphan | no sessions, no connected client, no `shux` client process, up 10+ minutes | dismisses it |
 | idle | sessions whose panes are shells at a prompt (or exited), no clients, quiet for `--idle-after` (6h) | only with `--idle` |
 | in use | attached or connected to, a command or program running in a pane, recently active, under 10 minutes old, or running visarjana itself | never; only `-s SOCKET --in-use` |
-| unknown | its socket or session list cannot be read | leaves it alone |
+| unknown | another shux build, or its socket, sessions or activity cannot be read | leaves it alone; the run exits 1 |
 
 Activity is read from the operating system, not from shux: a pane is busy when its
 shell is not the foreground process on its terminal or has a child, and quiet
@@ -132,7 +133,10 @@ touched and spared if it no longer qualifies. Open agent-browser sessions are
 listed with the command to close them, never closed, because nothing tells an
 abandoned one from a busy one; headless Chromes orphaned by a dead daemon are
 dismissed. Requires `jq` and `lsof`. `--force` permits SIGKILL after the grace
-period. See `visarjana --help` for every option, environment variable and exit code.
+period. Colour is on at a terminal and off in a pipe, under `NO_COLOR`, `TERM=dumb` or
+`--json`; `FORCE_COLOR`/`CLICOLOR_FORCE` keep it through a pipe, and `--color
+auto|always|never` overrides them all. See `visarjana --help` for every option,
+environment variable and exit code.
 
 ### AirDrop Auto-Heal
 
