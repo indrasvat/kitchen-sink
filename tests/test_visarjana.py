@@ -830,6 +830,12 @@ class VisarjanaTest(unittest.TestCase):
             "-y", "-s", row["socket"], "--in-use", "--grace", "1", expected=expected
         )
 
+    def test_client_with_relative_socket_does_not_break_the_snapshot(self) -> None:
+        row = self.daemon(())
+        self.client(row, "shux --socket rel.sock session list")  # listed last by ps
+        self.run_script("-y")
+        self.assertIsNotNone(row["proc"].wait(timeout=5))
+
     def test_attached_daemon_and_its_terminal_survive_a_sweep(self) -> None:
         row = self.daemon()
         self.orca_terminals(row)

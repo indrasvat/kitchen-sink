@@ -365,7 +365,8 @@ snapshot() {
     NOW=$(date +%s)
     PS=$(ps -axo pid=,ppid=,tpgid=,stat=,etime=,tty=,args=) || return 1
     CLIENTS=$(shux_clients | while read -r cpid cargs; do
-        s=$(client_socket "$cpid" "$cargs") && [ -n "$s" ] && printf '%s\t%s\t%s\n' "$(canon "$s")" "$cpid" "$cargs"
+        s=$(client_socket "$cpid" "$cargs") || continue
+        [ -z "$s" ] || printf '%s\t%s\t%s\n' "$(canon "$s")" "$cpid" "$cargs"
     done)
 }
 # up PID: seconds since the process started, from ps's [[dd-]hh:]mm:ss
